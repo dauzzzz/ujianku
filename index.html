@@ -1272,8 +1272,8 @@ function evaluateSingleQuestion(soal, ans, manualUraianScore = null) {
   }
 
   if (jenis === 'PGK') {
-    const rawKeys = kunci.includes(',') || kunci.includes(' ')
-      ? kunci.split(/[,\s]+/)
+    const rawKeys = kunci.includes(',') || kunci.includes(';') || kunci.includes(' ')
+      ? kunci.split(/[,;\s]+/)
       : kunci.split('');
     const keyArr = [...new Set(rawKeys.map(x => x.trim().toUpperCase()).filter(Boolean))];
     const ansArr = Array.isArray(ans) ? [...new Set(ans.map(x => String(x).trim().toUpperCase()).filter(Boolean))] : [];
@@ -1327,11 +1327,14 @@ function evaluateSingleQuestion(soal, ans, manualUraianScore = null) {
     const N = pairs.length || 1;
     let B = 0, answered = 0;
     pairs.forEach(pair => {
-      const [pIdx, tIdx] = pair.split(/[:=-]/);
+      const parts = pair.split(/[:=-]/);
+      const pIdx = String(parts[0] ?? '').trim();
+      const tIdx = String(parts[1] ?? '').trim();
+      if (pIdx === '' || tIdx === '') return;
       const userVal = ans[pIdx];
       if (userVal !== undefined && userVal !== null && String(userVal) !== '') {
         answered++;
-        if (String(userVal).trim() === String(tIdx).trim()) B++;
+        if (String(userVal).trim() === tIdx) B++;
       }
     });
     if (answered === 0) return { skor: 0, bobot, status: 'kosong', jawaban: ans };
@@ -2862,14 +2865,16 @@ function bulkDeleteSiswa() {
     "Hapus Data Siswa Terpilih",
     `Apakah Anda yakin ingin menghapus ${STATE.selectedSiswaIds.length} data siswa terpilih beserta seluruh jadwal dan nilainya?`,
     async () => {
-      try {
-        await dbDelete('siswa', STATE.selectedSiswaIds);
-        STATE.selectedSiswaIds = [];
-        await loadRoleScopedData();
-        notify("Data siswa terpilih berhasil dihapus.", "success");
-      } catch (err) {
-        notify("Gagal menghapus data siswa: " + err.message, "error");
-      }
+      await runWithBusyLock('bulk-delete-siswa', async () => {
+        try {
+          await dbDelete('siswa', STATE.selectedSiswaIds);
+          STATE.selectedSiswaIds = [];
+          await loadRoleScopedData();
+          notify("Data siswa terpilih berhasil dihapus.", "success");
+        } catch (err) {
+          notify("Gagal menghapus data siswa: " + err.message, "error");
+        }
+      });
     }
   );
 }
@@ -3248,15 +3253,17 @@ function proktorResetSesi(jadwalId, siswaId, mapelId) {
     "Reset Sesi Ujian Peserta",
     "Status peserta akan dikembalikan ke 'Belum Mulai' dan nilai sebelumnya dihapus agar dapat mengulang ujian. Lanjutkan?",
     async () => {
-      try {
-        await dbUpdate('jadwal_peserta', jadwalId, { status_ujian: 'Belum Mulai', pelanggaran: 0 }, enforceSchool);
-        const existingHasil = STATE.hasilList.find(h => h.siswa_id === siswaId && h.mapel_id === mapelId);
-        if (existingHasil) await dbDelete('hasil_ujian', existingHasil.id, enforceSchool);
-        await loadRoleScopedData();
-        notify("Sesi ujian peserta telah di-reset.", "success");
-      } catch (err) {
-        notify("Gagal me-reset sesi: " + err.message, "error");
-      }
+      await runWithBusyLock(`reset-sesi-${jadwalId}`, async () => {
+        try {
+          await dbUpdate('jadwal_peserta', jadwalId, { status_ujian: 'Belum Mulai', pelanggaran: 0 }, enforceSchool);
+          const existingHasil = STATE.hasilList.find(h => h.siswa_id === siswaId && h.mapel_id === mapelId);
+          if (existingHasil) await dbDelete('hasil_ujian', existingHasil.id, enforceSchool);
+          await loadRoleScopedData();
+          notify("Sesi ujian peserta telah di-reset.", "success");
+        } catch (err) {
+          notify("Gagal me-reset sesi: " + err.message, "error");
+        }
+      });
     }
   );
 }
@@ -3477,6 +3484,7 @@ function printRekapF4() {
   const list = getFilteredHasil();
   if (!list.length) return notify("Belum ada data nilai untuk dicetak.", "error");
   const sek = getSekolahById(STATE.activeSekolahId);
+  const pageSizeRule = STATE.cardPaperSize === 'A4' ? 'size: A4 portrait; margin: 10mm;' : 'size: 215mm 330mm; margin: 12mm;';
   const rowsHtml = list.map((h, idx) => {
     const s = STATE.siswaList.find(x => x.id === h.siswa_id) || {};
     const m = STATE.mapelList.find(x => x.id === h.mapel_id) || {};
@@ -3493,9 +3501,9 @@ function printRekapF4() {
   }).join('');
 
   const docHtml = `<!DOCTYPE html>
-<html lang="id"><head><meta charset="UTF-8"><title>Rekap Nilai F4</title>
+<html lang="id"><head><meta charset="UTF-8"><title>Rekap Nilai ${esc(STATE.cardPaperSize)}</title>
 <style>
-  @page { size: 215mm 330mm; margin: 12mm; }
+  @page { ${pageSizeRule} }
   body { font-family: Arial, sans-serif; font-size: 11px; color: #0F172A; }
   h2, p { margin: 0; text-align: center; }
   table { width: 100%; border-collapse: collapse; margin-top: 12px; }
@@ -5409,15 +5417,15 @@ CREATE TABLE IF NOT EXISTS public.pengaturan_sekolah (
     npsn TEXT UNIQUE NOT NULL DEFAULT '20506432',
     kecamatan TEXT DEFAULT 'Kecamatan Turi, Kabupaten Lamongan',
     logo_url TEXT DEFAULT '',
+    app_badge TEXT DEFAULT 'PUSDATIN • ANBK',
+    app_subtitle TEXT DEFAULT 'Sistem Asesmen Berbasis Komputer',
     token_aktif TEXT NOT NULL DEFAULT 'SAS2026',
     tanggal_ujian TEXT DEFAULT '2026-11-25',
     token_updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-
--- 2. RUANG UJIAN (Terisolasi per sekolah_id)
-CREATE TABLE IF NOT EXISTS public.ruang_ujian (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ALTER TABLE public.pengaturan_sekolah ADD COLUMN IF NOT EXISTS app_badge TEXT DEFAULT 'PUSDATIN • ANBK';
+ALTER TABLE public.pengaturan_sekolah ADD COLUMN IF NOT EXISTS app_subtitle TEXT DEFAULT 'Sistem Asesmen Berbasis Komputer';
     sekolah_id UUID REFERENCES public.pengaturan_sekolah(id) ON DELETE CASCADE,
     kode_ruang TEXT NOT NULL,
     nama_ruang TEXT NOT NULL,
@@ -5632,14 +5640,15 @@ function renderSqlAndDeployGuide() {
 function renderConfirmModal() {
   if (!STATE.confirmModal) return '';
   const { title, message, confirmLabel, isDanger } = STATE.confirmModal;
+  const isConfirmBusy = isBusy('confirm-action');
   return `
     <div class="no-print fixed inset-0 bg-slate-900/60 z-[999999] flex items-center justify-center p-4">
       <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
         <h3 class="text-base font-extrabold text-slate-900">${esc(title)}</h3>
         <p class="text-xs text-slate-600 mt-2 leading-relaxed">${esc(message)}</p>
         <div class="mt-5 flex justify-end gap-2">
-          <button onclick="CBT.closeConfirm()" class="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50">Batal</button>
-          <button onclick="CBT.runConfirm()" class="px-4 py-2 rounded-xl text-xs font-extrabold text-white shadow ${isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}">${esc(confirmLabel)}</button>
+          <button type="button" ${isConfirmBusy ? 'disabled' : ''} onclick="CBT.closeConfirm()" class="px-4 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Batal</button>
+          <button type="button" ${isConfirmBusy ? 'disabled' : ''} onclick="CBT.runConfirm()" class="px-4 py-2 rounded-xl text-xs font-extrabold text-white shadow disabled:opacity-60 disabled:cursor-wait ${isDanger ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}">${isConfirmBusy ? 'Memproses...' : esc(confirmLabel)}</button>
         </div>
       </div>
     </div>
@@ -5911,41 +5920,48 @@ window.CBT = {
   copySql: copySqlSchema,
   deleteItem: (table, id) => {
     askConfirm("Konfirmasi Hapus Data", "Apakah Anda yakin ingin menghapus item ini?", async () => {
-      try {
-        await dbDelete(table, id);
-        if (table === 'mapel' && STATE.selectedMapelId === id) {
-          STATE.selectedMapelId = '';
+      await runWithBusyLock(`delete-${table}-${id}`, async () => {
+        try {
+          await dbDelete(table, id);
+          if (table === 'mapel' && STATE.selectedMapelId === id) {
+            STATE.selectedMapelId = '';
+          }
+          await loadRoleScopedData();
+          notify("Data berhasil dihapus.", "success");
+        } catch (err) {
+          notify("Gagal menghapus data: " + err.message, "error");
         }
-        await loadRoleScopedData();
-        notify("Data berhasil dihapus.", "success");
-      } catch (err) {
-        notify("Gagal menghapus data: " + err.message, "error");
-      }
+      });
     });
   },
   deleteSoal: (id) => {
     askConfirm("Hapus Butir Soal", "Apakah Anda yakin ingin menghapus butir soal ini?", async () => {
-      try {
-        await dbDelete('soal', id);
-        if (STATE.editSoalId === id) STATE.editSoalId = null;
-        touchMapelCacheVersion(STATE.selectedMapelId);
-        await loadBankSoalByMapel(STATE.selectedMapelId);
-        STATE.editSoalId = STATE.soalList[0]?.id || null;
-        STATE.newSoalNomor = null;
-        STATE.formStimulusId = undefined;
-        render();
-        notify("Butir soal dihapus.", "success");
-      } catch (err) {
-        notify("Gagal menghapus soal: " + err.message, "error");
-      }
+      await runWithBusyLock(`delete-soal-${id}`, async () => {
+        try {
+          await dbDelete('soal', id);
+          if (STATE.editSoalId === id) STATE.editSoalId = null;
+          touchMapelCacheVersion(STATE.selectedMapelId);
+          await loadBankSoalByMapel(STATE.selectedMapelId);
+          STATE.editSoalId = STATE.soalList[0]?.id || null;
+          STATE.newSoalNomor = null;
+          STATE.formStimulusId = undefined;
+          render();
+          notify("Butir soal dihapus.", "success");
+        } catch (err) {
+          notify("Gagal menghapus soal: " + err.message, "error");
+        }
+      });
     });
   },
-  closeConfirm: () => { STATE.confirmModal = null; render(); },
+  closeConfirm: () => { if (isBusy('confirm-action')) return; STATE.confirmModal = null; render(); },
   runConfirm: async () => {
     const fn = STATE.confirmModal?.onConfirm;
-    STATE.confirmModal = null;
-    render();
-    if (fn) await fn();
+    if (!fn || isBusy('confirm-action')) return;
+    await runWithBusyLock('confirm-action', async () => {
+      await fn();
+      STATE.confirmModal = null;
+      render();
+    });
   },
   closeInfo: () => { STATE.infoModal = null; render(); }
 };
