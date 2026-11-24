@@ -399,6 +399,8 @@ const MOCK_DB = {
       npsn: "20506432",
       kecamatan: "Kecamatan Turi, Kabupaten Lamongan",
       logo_url: "",
+      app_badge: "PUSDATIN • ANBK",
+      app_subtitle: "Sistem Asesmen Berbasis Komputer",
       token_aktif: "SAS2026",
       tanggal_ujian: "2026-11-25"
     },
@@ -408,6 +410,8 @@ const MOCK_DB = {
       npsn: "20506499",
       kecamatan: "Kecamatan Turi, Kabupaten Lamongan",
       logo_url: "",
+      app_badge: "PUSDATIN • ANBK",
+      app_subtitle: "Sistem Asesmen Berbasis Komputer",
       token_aktif: "SKMJ26",
       tanggal_ujian: "2026-11-25"
     }
@@ -701,13 +705,26 @@ function parseDMYToISO(inputStr, fallbackISO = '2026-11-25') {
 }
 
 function getSekolahById(id) {
-  return STATE.sekolahList.find(s => s.id === id) || STATE.sekolah || {
+  const found = STATE.sekolahList.find(s => s.id === id) || STATE.sekolah || {};
+  return {
     nama_sekolah: 'SDN GEDONGBOYOUNTUNG',
     npsn: '20506432',
     kecamatan: 'Kecamatan Turi, Kabupaten Lamongan',
     logo_url: '',
+    app_badge: 'PUSDATIN • ANBK',
+    app_subtitle: 'Sistem Asesmen Berbasis Komputer',
     token_aktif: 'SAS2026',
-    tanggal_ujian: '2026-11-25'
+    tanggal_ujian: '2026-11-25',
+    ...found
+  };
+}
+
+function getAppBranding() {
+  const primarySchool = STATE.sekolahList[0] || STATE.sekolah || {};
+  return {
+    logo_url: primarySchool.logo_url || '',
+    app_badge: primarySchool.app_badge || 'PUSDATIN • ANBK',
+    app_subtitle: primarySchool.app_subtitle || 'Sistem Asesmen Berbasis Komputer'
   };
 }
 
@@ -720,25 +737,40 @@ function renderRichText(rawHtml) {
       if (!tex) return '';
       try {
         return window.katex.renderToString(tex, {
-          throwOnError: false,
-          displayMode: Boolean(blockTex)
+          displayMode: Boolean(blockTex),
+          throwOnError: false
         });
       } catch (_) {
         return esc(tex);
       }
     });
   }
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  if (window.katex) {
-    tmp.querySelectorAll('.ql-formula').forEach(el => {
-      const tex = el.getAttribute('data-value') || el.textContent || '';
-      try {
-        el.innerHTML = window.katex.renderToString(tex, { throwOnError: false });
-      } catch (_) {}
-    });
+  return `<div class="cbt-rich-content ql-editor">${html}</div>`;
+}
+
+function onLogoFileUpload(e, targetSchoolId) {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) {
+    return notify("Pilih file gambar (PNG, JPG, WEBP, atau SVG) untuk logo.", "error");
   }
-  return `<div class="cbt-rich-content ql-editor">${tmp.innerHTML}</div>`;
+  if (file.size > 400 * 1024) {
+    return notify("Ukuran file logo maksimal 400 KB agar penyimpanan ringan dan optimal.", "error");
+  }
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    const dataUrl = String(evt.target?.result || '');
+    if (!dataUrl) return notify("Gagal membaca file logo.", "error");
+    const formEl = document.getElementById(`form-sekolah-${targetSchoolId}`) || document.getElementById('form-app-branding');
+    if (formEl) {
+      const urlInput = formEl.querySelector('[name="logo_url"]');
+      if (urlInput) urlInput.value = dataUrl;
+    }
+    window.CBT.onSchoolLogoInput(targetSchoolId, dataUrl);
+    notify("Logo dari file berhasil dimuat. Klik tombol Simpan untuk menerapkan.", "success");
+  };
+  reader.readAsDataURL(file);
 }
 
 /* ============================================================================
@@ -851,6 +883,8 @@ async function loadInitialData() {
       npsn: '20506432',
       kecamatan: 'Kecamatan Turi, Kabupaten Lamongan',
       logo_url: '',
+      app_badge: 'PUSDATIN • ANBK',
+      app_subtitle: 'Sistem Asesmen Berbasis Komputer',
       token_aktif: 'SAS2026',
       tanggal_ujian: '2026-11-25',
       ...sk
@@ -2748,17 +2782,44 @@ async function savePengaturanSekolah(e, sekolahId) {
   await runWithBusyLock(`save-sekolah-${sekolahId}`, async () => {
     try {
       const fd = new FormData(e.target);
+      const current = getSekolahById(sekolahId);
       const payload = {
-        nama_sekolah: fd.get('nama_sekolah').trim().toUpperCase(),
-        npsn: fd.get('npsn').trim(),
-        kecamatan: fd.get('kecamatan').trim(),
-        logo_url: fd.get('logo_url').trim(),
-        token_aktif: fd.get('token_aktif').trim().toUpperCase(),
-        tanggal_ujian: fd.get('tanggal_ujian')
+        nama_sekolah: (fd.get('nama_sekolah') || current.nama_sekolah || '').trim().toUpperCase(),
+        npsn: (fd.get('npsn') || current.npsn || '').trim(),
+        kecamatan: (fd.get('kecamatan') ?? current.kecamatan ?? '').trim(),
+        logo_url: (fd.get('logo_url') ?? current.logo_url ?? '').trim(),
+        app_badge: (fd.get('app_badge') ?? current.app_badge ?? 'PUSDATIN • ANBK').trim() || 'PUSDATIN • ANBK',
+        app_subtitle: (fd.get('app_subtitle') ?? current.app_subtitle ?? 'Sistem Asesmen Berbasis Komputer').trim() || 'Sistem Asesmen Berbasis Komputer',
+        token_aktif: (fd.get('token_aktif') || current.token_aktif || 'SAS2026').trim().toUpperCase(),
+        tanggal_ujian: fd.get('tanggal_ujian') || current.tanggal_ujian || '2026-11-25'
       };
-      await dbUpdate('pengaturan_sekolah', sekolahId, payload);
+      try {
+        await dbUpdate('pengaturan_sekolah', sekolahId, payload);
+      } catch (dbErr) {
+        const msg = String(dbErr?.message || '');
+        if (msg.includes('app_badge') || msg.includes('app_subtitle') || msg.includes('schema cache')) {
+          const fallbackPayload = { ...payload };
+          delete fallbackPayload.app_badge;
+          delete fallbackPayload.app_subtitle;
+          await dbUpdate('pengaturan_sekolah', sekolahId, fallbackPayload);
+          if (IS_PREVIEW) {
+            const idx = (MOCK_DB.pengaturan_sekolah || []).findIndex(x => x.id === sekolahId);
+            if (idx >= 0) MOCK_DB.pengaturan_sekolah[idx] = { ...MOCK_DB.pengaturan_sekolah[idx], app_badge: payload.app_badge, app_subtitle: payload.app_subtitle };
+          }
+        } else {
+          throw dbErr;
+        }
+      }
       await loadRoleScopedData();
-      notify("Pengaturan identitas sekolah berhasil disimpan!", "success");
+      const updatedInState = STATE.sekolahList.find(x => x.id === sekolahId);
+      if (updatedInState) {
+        updatedInState.app_badge = payload.app_badge;
+        updatedInState.app_subtitle = payload.app_subtitle;
+        updatedInState.logo_url = payload.logo_url;
+        updatedInState.nama_sekolah = payload.nama_sekolah;
+      }
+      render();
+      notify("Pengaturan identitas aplikasi & sekolah berhasil disimpan!", "success");
     } catch (err) {
       notify("Gagal menyimpan pengaturan sekolah: " + err.message, "error");
     }
@@ -3456,6 +3517,10 @@ function printRekapF4() {
    ============================================================================ */
 function renderHeaderPusdatin(subtitle, rightHtml = '') {
   const s = getSekolahById(STATE.activeSekolahId);
+  const brand = getAppBranding();
+  const displayLogo = s.logo_url || brand.logo_url || DEFAULT_SHIELD_SVG;
+  const displayBadge = s.app_badge || brand.app_badge || 'PUSDATIN • ANBK';
+  const displaySubtitle = subtitle || s.app_subtitle || brand.app_subtitle || 'Sistem Asesmen Berbasis Komputer';
   const schoolTitle = (STATE.role === 'admin' && STATE.activeSekolahId === 'ALL')
     ? 'PORTAL KOORDINATOR MULTI-SEKOLAH (SEMUA NPSN)'
     : `${s.nama_sekolah} (NPSN: ${s.npsn})`;
@@ -3465,14 +3530,14 @@ function renderHeaderPusdatin(subtitle, rightHtml = '') {
       <div class="w-full max-w-7xl mx-auto px-3 sm:px-5 flex items-center justify-between gap-2">
         <div class="flex items-center gap-2.5 min-w-0">
           <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-white p-1 flex items-center justify-center shadow-sm shrink-0">
-            <img src="${esc(s.logo_url || DEFAULT_SHIELD_SVG)}"
+            <img src="${esc(displayLogo)}"
               onerror="this.onerror=null;this.src='${DEFAULT_SHIELD_SVG}'"
               alt="Logo" class="w-full h-full object-contain" />
           </div>
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <span class="text-[10px] font-extrabold tracking-wider uppercase bg-amber-400 text-slate-950 px-2 py-0.5 rounded">PUSDATIN • ANBK</span>
-              <span class="text-xs text-blue-100 truncate hidden sm:inline">${esc(subtitle)}</span>
+              <span class="text-[10px] font-extrabold tracking-wider uppercase bg-amber-400 text-slate-950 px-2 py-0.5 rounded">${esc(displayBadge)}</span>
+              <span class="text-xs text-blue-100 truncate hidden sm:inline">${esc(displaySubtitle)}</span>
             </div>
             <h1 class="text-xs sm:text-base font-extrabold tracking-tight leading-tight truncate">${esc(schoolTitle)}</h1>
           </div>
@@ -3487,10 +3552,14 @@ function renderHeaderPusdatin(subtitle, rightHtml = '') {
 
 function renderLoginScreen() {
   const s = getSekolahById(STATE.activeSekolahId);
+  const brand = getAppBranding();
+  const initLogo = brand.logo_url || s.logo_url || DEFAULT_SHIELD_SVG;
+  const initBadge = brand.app_badge || 'PUSDATIN • ANBK';
+  const initSubtitle = brand.app_subtitle || 'Sistem Asesmen Berbasis Komputer';
   const tab = STATE.loginTab;
   return `
     <div class="min-h-screen flex flex-col justify-between">
-      ${renderHeaderPusdatin('Sistem Asesmen Berbasis Komputer', `
+      ${renderHeaderPusdatin(initSubtitle, `
         <span class="text-[11px] bg-white/15 px-2.5 py-1 rounded-full font-semibold">alfian tech • Isolasi NPSN</span>
       `)}
 
@@ -3509,7 +3578,13 @@ function renderLoginScreen() {
       <main class="flex-1 flex items-center justify-center p-4">
         <div class="w-full max-w-md glass-panel rounded-3xl shadow-xl overflow-hidden">
           <div class="bg-slate-50/90 border-b border-slate-200/80 p-5 text-center">
-            <h2 class="text-lg font-extrabold text-slate-900">Selamat Datang di Aplikasi CBT</h2>
+            <div class="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-xs mx-auto mb-2.5 p-2 flex items-center justify-center">
+              <img src="${esc(initLogo)}"
+                onerror="this.onerror=null;this.src='${DEFAULT_SHIELD_SVG}'"
+                alt="Logo Aplikasi" class="w-full h-full object-contain" />
+            </div>
+            <div class="inline-block text-[10px] font-extrabold tracking-wider uppercase bg-amber-400 text-slate-950 px-2.5 py-0.5 rounded mb-1">${esc(initBadge)}</div>
+            <h2 class="text-lg font-extrabold text-slate-900">${esc(initSubtitle)}</h2>
             <p class="text-xs text-slate-500 mt-1">Asesmen Berbasis Komputer Terisolasi NPSN • ${esc(s.kecamatan || 'Kec. Turi, Lamongan')}</p>
           </div>
 
@@ -4264,6 +4339,9 @@ function renderAdminContent() {
   const scopedSiswa = getScopedSiswaList();
 
   if (t === 'dashboard') {
+    const selectedSek = (STATE.activeSekolahId && STATE.activeSekolahId !== 'ALL')
+      ? getSekolahById(STATE.activeSekolahId)
+      : (STATE.sekolahList[0] || null);
     return `
       <div class="space-y-4">
         <div class="glass-panel rounded-2xl p-5 shadow-sm">
@@ -4285,6 +4363,62 @@ function renderAdminContent() {
             `).join('')}
           </div>
         </div>
+
+        ${selectedSek ? `
+          <form id="form-sekolah-${selectedSek.id}" onsubmit="CBT.saveSekolah(event, '${selectedSek.id}')" class="glass-panel rounded-2xl p-5 shadow-sm space-y-3 text-xs">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
+              <div>
+                <h3 class="text-sm font-extrabold text-slate-900">Pengaturan Edit Nama Aplikasi, Nama Sekolah &amp; Logo Awal</h3>
+                <p class="text-[11px] text-slate-500">Atur label badge, subjudul awal aplikasi, nama sekolah, dan logo awal tampilan.</p>
+              </div>
+              <button type="button" onclick="CBT.setAdminTab('sekolah')" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700">
+                Kelola Semua Sekolah →
+              </button>
+            </div>
+            <div class="flex items-center gap-3.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+              <div class="w-14 h-14 rounded-xl bg-white border border-slate-300 p-1.5 flex items-center justify-center shrink-0">
+                <img id="logo-preview-${selectedSek.id}" src="${esc(selectedSek.logo_url || DEFAULT_SHIELD_SVG)}"
+                  onerror="this.onerror=null;this.src='${DEFAULT_SHIELD_SVG}'"
+                  alt="Preview Logo" class="w-full h-full object-contain" />
+              </div>
+              <div class="flex-1 min-w-0 space-y-1.5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <label class="font-bold text-slate-700">Nama Sekolah</label>
+                  <label class="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-[11px] cursor-pointer">
+                    📁 Pilih File Logo Awal
+                    <input type="file" accept="image/*" onchange="CBT.onLogoFileUpload(event, '${selectedSek.id}')" class="hidden" />
+                  </label>
+                </div>
+                <input name="nama_sekolah" value="${esc(selectedSek.nama_sekolah)}" required class="w-full px-3 py-2 rounded-xl border bg-white font-extrabold uppercase" />
+              </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <label class="font-bold text-slate-600 block mb-1">Nama Badge Awal (Contoh: PUSDATIN • ANBK)</label>
+                <input name="app_badge" value="${esc(selectedSek.app_badge || 'PUSDATIN • ANBK')}" required class="w-full px-3 py-2 rounded-xl border bg-white font-bold" />
+              </div>
+              <div>
+                <label class="font-bold text-slate-600 block mb-1">Subjudul Awal Aplikasi</label>
+                <input name="app_subtitle" value="${esc(selectedSek.app_subtitle || 'Sistem Asesmen Berbasis Komputer')}" required class="w-full px-3 py-2 rounded-xl border bg-white font-semibold" />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="font-bold text-slate-600 block mb-1">URL Logo Awal Aplikasi (atau Unggah File Logo di atas)</label>
+                <input name="logo_url" value="${esc(selectedSek.logo_url || '')}" oninput="CBT.onSchoolLogoInput('${selectedSek.id}', this.value)" placeholder="https://.../logo.png" class="w-full px-3 py-2 rounded-xl border bg-white" />
+              </div>
+              <div class="sm:col-span-2">
+                <label class="font-bold text-slate-600 block mb-1">Kecamatan / Kabupaten</label>
+                <input name="kecamatan" value="${esc(selectedSek.kecamatan || '')}" class="w-full px-3 py-2 rounded-xl border bg-white" />
+              </div>
+            </div>
+            <input type="hidden" name="npsn" value="${esc(selectedSek.npsn)}" />
+            <input type="hidden" name="token_aktif" value="${esc(selectedSek.token_aktif)}" />
+            <input type="hidden" name="tanggal_ujian" value="${esc(selectedSek.tanggal_ujian || '2026-11-25')}" />
+            <div class="flex justify-end">
+              <button type="submit" class="px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold shadow">Simpan Nama Aplikasi, Sekolah &amp; Logo</button>
+            </div>
+          </form>
+        ` : ''}
+
         ${renderMonitoringSection(null)}
       </div>
     `;
@@ -4318,19 +4452,60 @@ function renderAdminContent() {
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           ${STATE.sekolahList.map(sk => `
-            <form onsubmit="CBT.saveSekolah(event, '${sk.id}')" class="glass-panel rounded-2xl p-4 shadow-sm space-y-2.5 text-xs">
+            <form id="form-sekolah-${sk.id}" onsubmit="CBT.saveSekolah(event, '${sk.id}')" class="glass-panel rounded-2xl p-4 shadow-sm space-y-2.5 text-xs">
               <div class="flex items-center justify-between border-b pb-2">
                 <span class="font-extrabold text-blue-800">NPSN: ${esc(sk.npsn)}</span>
                 <span class="px-2.5 py-0.5 rounded-lg bg-amber-100 text-amber-900 font-bold">Token: ${esc(sk.token_aktif)}</span>
               </div>
-              <input name="nama_sekolah" value="${esc(sk.nama_sekolah)}" required class="w-full px-3 py-2 rounded-xl border bg-white font-bold" />
-              <div class="grid grid-cols-2 gap-2">
-                <input name="npsn" value="${esc(sk.npsn)}" required class="px-3 py-2 rounded-xl border bg-white font-mono" />
-                <input name="tanggal_ujian" type="date" value="${esc(sk.tanggal_ujian)}" class="px-3 py-2 rounded-xl border bg-white" />
+              <div class="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                <div class="w-12 h-12 rounded-xl bg-white border border-slate-300 p-1 flex items-center justify-center shrink-0">
+                  <img id="logo-preview-${sk.id}" src="${esc(sk.logo_url || DEFAULT_SHIELD_SVG)}"
+                    onerror="this.onerror=null;this.src='${DEFAULT_SHIELD_SVG}'"
+                    alt="Logo ${esc(sk.nama_sekolah)}" class="w-full h-full object-contain" />
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center justify-between gap-2 mb-1">
+                    <label class="font-bold text-slate-600 text-[11px]">Nama Sekolah</label>
+                    <label class="px-2 py-0.5 rounded bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-[10px] cursor-pointer">
+                      📁 File Logo
+                      <input type="file" accept="image/*" onchange="CBT.onLogoFileUpload(event, '${sk.id}')" class="hidden" />
+                    </label>
+                  </div>
+                  <input name="nama_sekolah" value="${esc(sk.nama_sekolah)}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-bold uppercase" />
+                </div>
               </div>
-              <input name="kecamatan" value="${esc(sk.kecamatan)}" class="w-full px-3 py-2 rounded-xl border bg-white" />
-              <input name="logo_url" value="${esc(sk.logo_url)}" placeholder="URL Logo Sekolah" class="w-full px-3 py-2 rounded-xl border bg-white" />
-              <input name="token_aktif" value="${esc(sk.token_aktif)}" required class="w-full px-3 py-2 rounded-xl border bg-white font-bold uppercase" />
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Nama Badge Awal</label>
+                  <input name="app_badge" value="${esc(sk.app_badge || 'PUSDATIN • ANBK')}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-bold" />
+                </div>
+                <div>
+                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Subjudul Awal Aplikasi</label>
+                  <input name="app_subtitle" value="${esc(sk.app_subtitle || 'Sistem Asesmen Berbasis Komputer')}" required class="w-full px-3 py-1.5 rounded-xl border bg-white" />
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">NPSN</label>
+                  <input name="npsn" value="${esc(sk.npsn)}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-mono" />
+                </div>
+                <div>
+                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Tanggal Pelaksanaan</label>
+                  <input name="tanggal_ujian" type="date" value="${esc(sk.tanggal_ujian)}" class="w-full px-3 py-1.5 rounded-xl border bg-white" />
+                </div>
+              </div>
+              <div>
+                <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Kecamatan / Kabupaten</label>
+                <input name="kecamatan" value="${esc(sk.kecamatan)}" class="w-full px-3 py-1.5 rounded-xl border bg-white" />
+              </div>
+              <div>
+                <label class="font-bold text-slate-600 text-[11px] block mb-0.5">URL Logo Awal / Sekolah</label>
+                <input name="logo_url" value="${esc(sk.logo_url)}" oninput="CBT.onSchoolLogoInput('${sk.id}', this.value)" placeholder="https://.../logo.png" class="w-full px-3 py-1.5 rounded-xl border bg-white" />
+              </div>
+              <div>
+                <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Token Ujian Aktif</label>
+                <input name="token_aktif" value="${esc(sk.token_aktif)}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-bold uppercase" />
+              </div>
               <button type="submit" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold">Simpan Perubahan Sekolah</button>
             </form>
           `).join('')}
@@ -5042,6 +5217,8 @@ function getFilteredCardStudents() {
 
 function renderSingleOfficialCardHtml(siswa) {
   const sek = getSekolahById(siswa.sekolah_id);
+  const brand = getAppBranding();
+  const cardLogo = sek.logo_url || brand.logo_url || DEFAULT_SHIELD_SVG;
   const r = STATE.ruang.find(x => x.id === siswa.ruang_id);
   const se = STATE.sesi.find(x => x.id === siswa.sesi_id);
   const sesiJam = se
@@ -5067,7 +5244,7 @@ function renderSingleOfficialCardHtml(siswa) {
     <div class="cbt-official-card kartu-item">
       <div class="cbt-card-header">
         <div class="cbt-card-logo">
-          <img src="${esc(sek.logo_url || DEFAULT_SHIELD_SVG)}"
+          <img src="${esc(cardLogo)}"
             onerror="this.onerror=null;this.src='${DEFAULT_SHIELD_SVG}'"
             alt="Logo Sekolah" />
         </div>
@@ -5570,6 +5747,15 @@ window.CBT = {
   updateToken: updateTokenSekolah,
   addSekolah: addSekolahBaru,
   saveSekolah: savePengaturanSekolah,
+  onSchoolLogoInput: (schoolId, urlVal) => {
+    const img = document.getElementById(`logo-preview-${schoolId}`);
+    if (!img) return;
+    const trimmed = String(urlVal || '').trim();
+    img.onerror = null;
+    img.src = trimmed || DEFAULT_SHIELD_SVG;
+    img.onerror = function () { this.onerror = null; this.src = DEFAULT_SHIELD_SVG; };
+  },
+  onLogoFileUpload,
   downloadTemplateSekolah,
   handleImportSekolahExcel,
   exportSekolahExcel,
