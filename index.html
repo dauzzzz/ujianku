@@ -684,6 +684,7 @@ const STATE = {
   editProktorId: null,
   editRuangId: null,
   editSesiId: null,
+  editDistribusiGroupKey: null,
   newSoalNomor: null,
   formStimulusId: undefined,
   mapelModalOpen: false,
@@ -4034,6 +4035,8 @@ async function generateJadwalMassal(e) {
       const sekolahId = fd.get('sekolah_id');
       const kelas = fd.get('kelas');
 
+      if (!mapelId) return notify("Pilih paket ujian terlebih dahulu.", "error");
+
       const targets = STATE.siswaList.filter(s => {
         if (sekolahId && sekolahId !== 'ALL' && s.sekolah_id !== sekolahId) return false;
         if (kelas && kelas !== 'Semua' && s.kelas !== kelas) return false;
@@ -4042,108 +4045,293 @@ async function generateJadwalMassal(e) {
 
       if (!targets.length) return notify("Tidak ada siswa pada sekolah/kelas yang dipilih.", "error");
 
-      const payloads = targets.map(s => ({
-        sekolah_id: s.sekolah_id,
-        siswa_id: s.id,
-        mapel_id: mapelId,
-        ruang_id: s.ruang_id,
-        sesi_id: s.sesi_id,
-        status_ujian: 'Belum Mulai',
-        pelanggaran: 0
-      }));
+      if (STATE.editDistribusiGroupKey) {
+        const prevGroup = buildDistribusiGroups().find(g => g.key === STATE.editDistribusiGroupKey);
+        if (prevGroup) {
+          const prevIds = prevGroup.rows.map(r => r.id);
+          const targetSiswaIds = new Set(targets.map(s => s.id));
+          const sameMapel = prevGroup.mapel_id === mapelId;
+          const idsToRemove = prevGroup.rows
+            .filter(r => !sameMapel || !targetSiswaIds.has(r.siswa_id))
+            .map(r => r.id);
+          if (idsToRemove.length > 0 && prevIds.length > 0) {
+            await dbDelete('jadwal_peserta', idsToRemove);
+          }
+        }
+      }
+
+      const existingMap = new Map();
+      STATE.jadwalList
+        .filter(j => j.mapel_id === mapelId)
+        .forEach(j => existingMap.set(j.siswa_id, j));
+
+      const payloads = targets.map(s => {
+        const prevRow = existingMap.get(s.id);
+        return {
+          ...(prevRow?.id ? { id: prevRow.id } : {}),
+          sekolah_id: s.sekolah_id,
+          siswa_id: s.id,
+          mapel_id: mapelId,
+          ruang_id: s.ruang_id,
+          sesi_id: s.sesi_id,
+          status_ujian: prevRow?.status_ujian || 'Belum Mulai',
+          pelanggaran: Number(prevRow?.pelanggaran) || 0
+        };
+      });
 
       await dbUpsert('jadwal_peserta', payloads, 'siswa_id,mapel_id');
+      const wasEditing = Boolean(STATE.editDistribusiGroupKey);
+      STATE.editDistribusiGroupKey = null;
       await loadRoleScopedData();
-      notify(`Jadwal berhasil didistribusikan ke ${payloads.length} peserta.`, "success");
+      notify(
+        wasEditing
+          ? `Distribusi jadwal berhasil diperbarui untuk ${payloads.length} peserta.`
+          : `Jadwal berhasil didistribusikan ke ${payloads.length} peserta.`,
+        "success"
+      );
     } catch (err) {
-      notify("Gagal menerbitkan jadwal: " + err.message, "error");
+      notify("Gagal menerbitkan/memperbarui jadwal: " + err.message, "error");
     }
   }, btn);
 }
 
-function proktorResetLogin(jadwalId) {
-  const enforceSchool = STATE.role === 'proktor' ? STATE.user.sekolah_id : null;
-  const target = STATE.jadwalList.find(j => j.id === jadwalId);
-  if (!target) return notify("Data jadwal peserta tidak ditemukan.", "error");
-  if (enforceSchool && target.sekolah_id !== enforceSchool) {
-    return notify("Akses ditolak: Peserta berasal dari sekolah lain!", "error");
-  }
-  const siswa = STATE.siswaList.find(s => s.id === target.siswa_id);
-  const namaPeserta = siswa ? `${siswa.nama_lengkap} (${siswa.username})` : 'peserta ini';
+function buildDistribusiGroups() {
+  const sidFilter = getEffectiveSchoolFilter();
+  const baseRows = STATE.jadwalList.filter(j => {
+    if (sidFilter && sidFilter !== 'ALL' && j.sekolah_id !== sidFilter) return false;
+    return true;
+  });
 
+  const grouped = new Map();
+  baseRows.forEach(j => {
+    const m = STATE.mapelList.find(x => x.id === j.mapel_id);
+    if (!m) return;
+    const s = STATE.siswaList.find(x => x.id === j.siswa_id);
+    const kls = s?.kelas || m.kelas_target || 'Semua';
+    const key = `${j.mapel_id}__${kls}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        mapel_id: j.mapel_id,
+        mapel: m,
+        kelas: kls,
+        rows: [],
+        schoolIds: new Set()
+      });
+    }
+    const g = grouped.get(key);
+    g.rows.push(j);
+    if (j.sekolah_id || s?.sekolah_id) g.schoolIds.add(j.sekolah_id || s.sekolah_id);
+  });
+
+  return Array.from(grouped.values()).map(g => {
+    const sIds = Array.from(g.schoolIds);
+    const schoolNames = sIds.map(id => getSekolahById(id).nama_sekolah).filter(Boolean);
+    const scopeSelectVal = sIds.length === 1 ? sIds[0] : 'ALL';
+    const cakupanLabel = sIds.length === STATE.sekolahList.length && STATE.sekolahList.length > 1
+      ? `Semua Sekolah (${sIds.length})`
+      : (schoolNames.length > 0 ? schoolNames.join(', ') : 'Semua Sekolah');
+
+    const belum = g.rows.filter(r => r.status_ujian === 'Belum Mulai').length;
+    const sedang = g.rows.filter(r => r.status_ujian === 'Sedang Mengerjakan').length;
+    const terkunci = g.rows.filter(r => r.status_ujian === 'Terkunci').length;
+    const selesai = g.rows.filter(r => r.status_ujian === 'Selesai').length;
+
+    return {
+      ...g,
+      jumlahPeserta: g.rows.length,
+      scopeSelectVal,
+      cakupanLabel,
+      belum,
+      sedang,
+      terkunci,
+      selesai
+    };
+  });
+}
+
+function startEditDistribusi(encodedKey) {
+  const key = decodeURIComponent(String(encodedKey || ''));
+  const grp = buildDistribusiGroups().find(g => g.key === key);
+  if (!grp) return notify("Data distribusi tidak ditemukan.", "error");
+
+  STATE.editDistribusiGroupKey = grp.key;
+  render();
+
+  const form = document.getElementById('form-distribusi-jadwal');
+  if (form) {
+    const mapelEl = form.querySelector('[name="mapel_id"]');
+    const sekEl = form.querySelector('[name="sekolah_id"]');
+    const klsEl = form.querySelector('[name="kelas"]');
+    if (mapelEl) mapelEl.value = grp.mapel_id;
+    if (sekEl) sekEl.value = grp.scopeSelectVal;
+    if (klsEl && [...klsEl.options].some(o => o.value === grp.kelas)) klsEl.value = grp.kelas;
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  notify(`Mode Edit distribusi "${grp.mapel.nama_mapel}" (Kelas ${grp.kelas}). Ubah lalu klik Simpan Perubahan Distribusi.`, "info");
+}
+
+function cancelEditDistribusi() {
+  STATE.editDistribusiGroupKey = null;
+  render();
+}
+
+function deleteDistribusi(encodedKey) {
+  const key = decodeURIComponent(String(encodedKey || ''));
+  const grp = buildDistribusiGroups().find(g => g.key === key);
+  if (!grp) return notify("Data distribusi tidak ditemukan.", "error");
+
+  const label = `${grp.mapel.kode_mapel} - ${grp.mapel.nama_mapel} (Kelas ${grp.kelas})`;
   askConfirm(
-    "Reset Login Peserta",
-    `Reset status login untuk ${namaPeserta}? Kunci anti-cheat & hitungan pelanggaran akan di-nol-kan tanpa menghapus jawaban yang sudah tersimpan.`,
+    "Hapus Distribusi Peserta",
+    `Hapus distribusi ujian "${label}" untuk ${grp.jumlahPeserta} peserta? Data paket soal & akun siswa tetap aman.`,
     async () => {
-      await runWithBusyLock(`reset-login-${jadwalId}`, async () => {
+      await runWithBusyLock(`del-distribusi-${grp.key}`, async () => {
         try {
-          const nextStatus = target.status_ujian === 'Terkunci' ? 'Sedang Mengerjakan' : target.status_ujian;
-          await dbUpdate('jadwal_peserta', jadwalId, { status_ujian: nextStatus, pelanggaran: 0 }, enforceSchool);
+          const idsToDelete = grp.rows.map(r => r.id).filter(Boolean);
+          if (idsToDelete.length > 0) {
+            await dbDelete('jadwal_peserta', idsToDelete);
+          }
+          if (STATE.editDistribusiGroupKey === grp.key) {
+            STATE.editDistribusiGroupKey = null;
+          }
+          STATE.jadwalList = STATE.jadwalList.filter(j => !idsToDelete.includes(j.id));
           await loadRoleScopedData();
-          notify(`Reset login berhasil untuk ${namaPeserta}.`, "success");
+          notify(`Distribusi "${label}" (${grp.jumlahPeserta} peserta) berhasil dihapus.`, "success");
         } catch (err) {
-          notify("Gagal melakukan reset login: " + err.message, "error");
+          notify("Gagal menghapus distribusi: " + err.message, "error");
         }
       });
-    },
-    "Ya, Reset Login",
-    false
+    }
   );
 }
 
+async function proktorResetLogin(jadwalId) {
+  await runWithBusyLock(`reset-login-${jadwalId}`, async () => {
+    try {
+      const target = STATE.jadwalList.find(j => String(j.id) === String(jadwalId));
+      if (!target) return notify("Data jadwal peserta tidak ditemukan.", "error");
+      if (target.status_ujian === 'Selesai') {
+        return notify("Peserta sudah menyelesaikan ujian.", "info");
+      }
+
+      const nextStatus = target.status_ujian === 'Terkunci'
+        ? 'Sedang Mengerjakan'
+        : (target.status_ujian || 'Belum Mulai');
+
+      await dbUpdate('jadwal_peserta', target.id, {
+        status_ujian: nextStatus,
+        pelanggaran: 0
+      }, target.sekolah_id || null);
+
+      target.status_ujian = nextStatus;
+      target.pelanggaran = 0;
+
+      if (IS_PREVIEW) {
+        const mRow = (MOCK_DB.jadwal_peserta || []).find(j => String(j.id) === String(target.id));
+        if (mRow) {
+          mRow.status_ujian = nextStatus;
+          mRow.pelanggaran = 0;
+        }
+      }
+
+      render();
+      notify("Reset login berhasil: kunci & pelanggaran peserta telah direset.", "success");
+    } catch (err) {
+      notify("Gagal reset login peserta: " + err.message, "error");
+    }
+  });
+}
+
 function proktorBulkResetLockedLogins(fixedRuangId = null) {
-  const enforceSchool = STATE.role === 'proktor' ? STATE.user.sekolah_id : null;
   const lockedRows = getScopedJadwalList().filter(j => {
     if (j.status_ujian !== 'Terkunci') return false;
-    if (fixedRuangId && j.ruang_id !== fixedRuangId) return false;
-    if (!fixedRuangId && STATE.selectedRuangFilter !== 'Semua' && j.ruang_id !== STATE.selectedRuangFilter) return false;
+    if (fixedRuangId && String(j.ruang_id) !== String(fixedRuangId)) return false;
+    if (!fixedRuangId && STATE.selectedRuangFilter !== 'Semua' && String(j.ruang_id) !== String(STATE.selectedRuangFilter)) return false;
     return true;
   });
 
   if (!lockedRows.length) {
-    return notify("Tidak ada peserta berstatus Terkunci pada filter saat ini.", "info");
+    return notify("Tidak ada peserta terkunci pada cakupan saat ini.", "info");
   }
 
   askConfirm(
-    "Reset Login Massal (Peserta Terkunci)",
-    `Buka kunci dan reset login untuk ${lockedRows.length} peserta yang berstatus Terkunci? Jawaban peserta tetap aman tersimpan.`,
+    "Reset Login Peserta Terkunci",
+    `Buka kunci dan reset pelanggaran untuk ${lockedRows.length} peserta yang berstatus Terkunci?`,
     async () => {
       await runWithBusyLock('bulk-reset-login', async () => {
         try {
           for (const row of lockedRows) {
-            await dbUpdate('jadwal_peserta', row.id, { status_ujian: 'Sedang Mengerjakan', pelanggaran: 0 }, enforceSchool);
+            await dbUpdate('jadwal_peserta', row.id, {
+              status_ujian: 'Sedang Mengerjakan',
+              pelanggaran: 0
+            }, row.sekolah_id || null);
+            row.status_ujian = 'Sedang Mengerjakan';
+            row.pelanggaran = 0;
+            if (IS_PREVIEW) {
+              const mRow = (MOCK_DB.jadwal_peserta || []).find(j => String(j.id) === String(row.id));
+              if (mRow) {
+                mRow.status_ujian = 'Sedang Mengerjakan';
+                mRow.pelanggaran = 0;
+              }
+            }
           }
-          await loadRoleScopedData();
+          render();
           notify(`Berhasil mereset login ${lockedRows.length} peserta terkunci.`, "success");
         } catch (err) {
           notify("Gagal reset login massal: " + err.message, "error");
         }
       });
     },
-    "Ya, Reset Semua Terkunci",
+    "Ya, Reset Semua",
     false
   );
 }
 
 function proktorResetSesi(jadwalId, siswaId, mapelId) {
-  const enforceSchool = STATE.role === 'proktor' ? STATE.user.sekolah_id : null;
-  const target = STATE.jadwalList.find(j => j.id === jadwalId);
-  if (enforceSchool && (!target || target.sekolah_id !== enforceSchool)) {
-    return notify("Akses ditolak: Peserta berasal dari sekolah lain!", "error");
-  }
+  const target = STATE.jadwalList.find(j => String(j.id) === String(jadwalId));
+  const siswa = STATE.siswaList.find(s => String(s.id) === String(siswaId));
+  const label = siswa?.nama_lengkap ? `peserta ${siswa.nama_lengkap}` : 'peserta ini';
+
   askConfirm(
     "Reset Sesi Ujian Peserta",
-    "Status peserta akan dikembalikan ke 'Belum Mulai' dan nilai sebelumnya dihapus agar dapat mengulang ujian. Lanjutkan?",
+    `Reset sesi ujian ${label} menjadi "Belum Mulai"? Jawaban tersimpan dan nilai ujian pada paket ini akan ikut dihapus agar peserta dapat memulai ulang dari awal.`,
     async () => {
       await runWithBusyLock(`reset-sesi-${jadwalId}`, async () => {
         try {
-          await dbUpdate('jadwal_peserta', jadwalId, { status_ujian: 'Belum Mulai', pelanggaran: 0 }, enforceSchool);
-          const existingHasil = STATE.hasilList.find(h => h.siswa_id === siswaId && h.mapel_id === mapelId);
-          if (existingHasil) await dbDelete('hasil_ujian', existingHasil.id, enforceSchool);
-          await loadRoleScopedData();
-          notify("Sesi ujian peserta telah di-reset.", "success");
+          await dbUpdate('jadwal_peserta', jadwalId, {
+            status_ujian: 'Belum Mulai',
+            pelanggaran: 0
+          }, target?.sekolah_id || null);
+
+          if (IS_PREVIEW) {
+            MOCK_DB.hasil_ujian = (MOCK_DB.hasil_ujian || []).filter(
+              h => !(String(h.siswa_id) === String(siswaId) && String(h.mapel_id) === String(mapelId))
+            );
+            const mRow = (MOCK_DB.jadwal_peserta || []).find(j => String(j.id) === String(jadwalId));
+            if (mRow) {
+              mRow.status_ujian = 'Belum Mulai';
+              mRow.pelanggaran = 0;
+            }
+          } else if (sb) {
+            await sb.from('hasil_ujian').delete().eq('siswa_id', siswaId).eq('mapel_id', mapelId);
+          }
+
+          try {
+            localStorage.removeItem(`cbt_draft_${siswaId}_${mapelId}`);
+          } catch (_) {}
+
+          STATE.jadwalList = STATE.jadwalList.map(j =>
+            String(j.id) === String(jadwalId) ? { ...j, status_ujian: 'Belum Mulai', pelanggaran: 0 } : j
+          );
+          STATE.hasilList = STATE.hasilList.filter(
+            h => !(String(h.siswa_id) === String(siswaId) && String(h.mapel_id) === String(mapelId))
+          );
+
+          render();
+          notify(`Sesi ujian ${label} berhasil di-reset ke "Belum Mulai".`, "success");
         } catch (err) {
-          notify("Gagal me-reset sesi: " + err.message, "error");
+          notify("Gagal mereset sesi ujian: " + err.message, "error");
         }
       });
     }
@@ -6130,24 +6318,114 @@ function renderAdminContent() {
   }
 
   if (t === 'jadwal') {
+    const distGroups = buildDistribusiGroups();
+    const editingDist = STATE.editDistribusiGroupKey
+      ? distGroups.find(g => g.key === STATE.editDistribusiGroupKey)
+      : null;
+    const activeEditMapel = editingDist?.mapel_id || STATE.selectedMapelId || STATE.mapelList[0]?.id || '';
+    const activeEditSek = editingDist?.scopeSelectVal || STATE.activeSekolahId || 'ALL';
+    const activeEditKls = editingDist?.kelas || 'Semua';
+
     return `
-      <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-4">
-        <h2 class="text-base font-extrabold text-slate-900">Distribusi Jadwal Ujian ke Peserta</h2>
-        <form onsubmit="CBT.generateJadwal(event)" class="flex flex-wrap gap-3 bg-slate-50 p-4 rounded-2xl border text-xs">
-          <select name="sekolah_id" class="px-3 py-2 rounded-xl border bg-white font-bold">
-            <option value="ALL">🌐 Semua Sekolah (${STATE.siswaList.length} Siswa)</option>
-            ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===STATE.activeSekolahId?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
-          </select>
-          <select name="mapel_id" required class="px-3 py-2 rounded-xl border bg-white font-bold">
-            ${STATE.mapelList.map(m => `<option value="${m.id}">${esc(m.nama_mapel)}</option>`).join('')}
-          </select>
-          <select name="kelas" class="px-3 py-2 rounded-xl border bg-white font-bold">
-            <option value="Semua">Semua Kelas</option>
-            ${[...new Set(STATE.siswaList.map(s => s.kelas))].map(k => `<option value="${k}">Kelas ${esc(k)}</option>`).join('')}
-          </select>
-          <button type="submit" class="px-5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold">Terbitkan Jadwal Peserta</button>
-        </form>
-        <p class="text-xs text-slate-500">Total jadwal aktif terdaftar: <strong>${STATE.jadwalList.length}</strong> sesi peserta.</p>
+      <div class="space-y-4">
+        <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 class="text-base font-extrabold text-slate-900">Distribusi Jadwal Ujian ke Peserta</h2>
+              <p class="text-xs text-slate-500 mt-0.5">Terbitkan paket soal ke peserta per sekolah/kelas, lalu pantau, edit, atau hapus daftar yang sudah terdistribusi di bawah.</p>
+            </div>
+            ${editingDist ? `
+              <button type="button" onclick="CBT.cancelEditDistribusi()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700">
+                ✕ Batal Edit Distribusi
+              </button>
+            ` : ''}
+          </div>
+
+          <form id="form-distribusi-jadwal" onsubmit="CBT.generateJadwal(event)" class="flex flex-wrap gap-3 ${editingDist ? 'bg-blue-50/80 border-blue-400 ring-2 ring-blue-100' : 'bg-slate-50 border-slate-200'} p-4 rounded-2xl border text-xs transition">
+            <select name="sekolah_id" class="px-3 py-2 rounded-xl border bg-white font-bold">
+              <option value="ALL" ${activeEditSek==='ALL'?'selected':''}>🌐 Semua Sekolah (${STATE.siswaList.length} Siswa)</option>
+              ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===activeEditSek?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
+            </select>
+            <select name="mapel_id" required class="px-3 py-2 rounded-xl border bg-white font-bold">
+              ${STATE.mapelList.map(m => `<option value="${m.id}" ${m.id===activeEditMapel?'selected':''}>${esc(m.kode_mapel)} - ${esc(m.nama_mapel)}</option>`).join('')}
+            </select>
+            <select name="kelas" class="px-3 py-2 rounded-xl border bg-white font-bold">
+              <option value="Semua" ${activeEditKls==='Semua'?'selected':''}>Semua Kelas</option>
+              ${[...new Set(STATE.siswaList.map(s => s.kelas))].map(k => `<option value="${k}" ${k===activeEditKls?'selected':''}>Kelas ${esc(k)}</option>`).join('')}
+            </select>
+            <button type="submit" class="px-5 py-2 rounded-xl ${editingDist ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-700 hover:bg-blue-800'} text-white font-bold shadow-xs">
+              ${editingDist ? 'Simpan Perubahan Distribusi' : 'Terbitkan Jadwal Peserta'}
+            </button>
+          </form>
+
+          <p class="text-xs text-slate-500">Total paket soal terdistribusi: <strong>${distGroups.length}</strong> kelompok • Total jadwal aktif terdaftar: <strong>${STATE.jadwalList.length}</strong> sesi peserta.</p>
+        </div>
+
+        <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="text-sm font-extrabold text-slate-900">Daftar Paket Soal yang Sudah Terdistribusi</h3>
+              <p class="text-xs text-slate-500">Menampilkan paket ujian/soal yang sudah diterbitkan beserta cakupan sekolah, jumlah peserta, status pengerjaan, dan aksi Edit / Hapus.</p>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase">
+                <tr>
+                  <th class="p-3">Paket Ujian / Soal</th>
+                  <th class="p-3">Cakupan Sekolah</th>
+                  <th class="p-3">Kelas</th>
+                  <th class="p-3">Jadwal (WIB)</th>
+                  <th class="p-3">Peserta Terdistribusi</th>
+                  <th class="p-3 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                ${distGroups.length === 0 ? `
+                  <tr><td colspan="6" class="p-6 text-center text-slate-400">Belum ada paket soal yang didistribusikan ke peserta.</td></tr>
+                ` : distGroups.map(g => {
+                  const safeKey = encodeURIComponent(String(g.key));
+                  const isEditingRow = STATE.editDistribusiGroupKey === g.key;
+                  const jamMulai = String(g.mapel.jam_mulai || '07:00').slice(0, 5);
+                  const jamSelesai = String(g.mapel.jam_selesai || '15:00').slice(0, 5);
+                  return `
+                    <tr class="${isEditingRow ? 'bg-blue-50/80' : 'hover:bg-slate-50/70'}">
+                      <td class="p-3">
+                        <div class="font-extrabold text-slate-900">${esc(g.mapel.nama_mapel)}</div>
+                        <div class="text-[11px] text-slate-500 font-mono">Kode: ${esc(g.mapel.kode_mapel)} • ${esc(g.mapel.status)}</div>
+                      </td>
+                      <td class="p-3">
+                        <span class="px-2 py-0.5 rounded bg-blue-50 text-blue-800 font-bold text-[11px]">${esc(g.cakupanLabel)}</span>
+                      </td>
+                      <td class="p-3 font-bold">${esc(g.kelas === 'Semua' ? 'Semua Kelas' : `Kelas ${g.kelas}`)}</td>
+                      <td class="p-3 text-[11px]">
+                        <div>${esc(formatTanggalDMY(g.mapel.tanggal_mulai))}</div>
+                        <div class="text-slate-500">${esc(jamMulai)} - ${esc(jamSelesai)} WIB</div>
+                      </td>
+                      <td class="p-3">
+                        <div class="font-extrabold text-slate-900">${g.jumlahPeserta} Peserta</div>
+                        <div class="text-[10px] text-slate-500">
+                          Belum: ${g.belum} • Proses: ${g.sedang} • Selesai: ${g.selesai}${g.terkunci > 0 ? ` • <span class="text-red-600 font-bold">Terkunci: ${g.terkunci}</span>` : ''}
+                        </div>
+                      </td>
+                      <td class="p-3 text-right space-x-1 whitespace-nowrap">
+                        <button type="button" onclick="CBT.startEditDistribusi('${safeKey}')"
+                          class="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold cursor-pointer">
+                          Edit
+                        </button>
+                        <button type="button" onclick="CBT.deleteDistribusi('${safeKey}')"
+                          class="px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold cursor-pointer">
+                          Hapus
+                        </button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     `;
   }
@@ -7343,6 +7621,9 @@ window.CBT = {
   handleImportSoalExcel,
   exportSoalExcel,
   generateJadwal: generateJadwalMassal,
+  startEditDistribusi,
+  cancelEditDistribusi,
+  deleteDistribusi,
   openKoreksi: async (hasilId, mapelId) => {
     STATE.koreksiHasilId = hasilId;
     await loadBankSoalByMapel(mapelId);
