@@ -589,7 +589,7 @@ const MOCK_DB = {
   mapel: [
     {
       id: "m-1", sekolah_id: null, sekolah_ids: [], kode_mapel: "LIT-VI", nama_mapel: "Asesmen Literasi & Numerasi Kelas VI",
-      kelas_target: "VI", durasi_menit: 60, tanggal_mulai: "2026-01-01",
+      kelas_target: "VI", durasi_menit: 60, tanggal_mulai: new Date(Date.now() + (7 * 3600 * 1000)).toISOString().slice(0, 10),
       jam_mulai: "00:00:00", jam_selesai: "23:59:59",
       acak_soal: false, acak_opsi: false, status: "Aktif"
     }
@@ -694,6 +694,7 @@ const STATE = {
   cardPaperSize: 'F4',
 
   activeExamMapel: null,
+  activeExamEndTimeMs: 0,
   examStimuli: [],
   examSoal: [],
   currentIdx: 0,
@@ -880,6 +881,64 @@ function parseDMYToISO(inputStr, fallbackISO = '2026-11-25') {
   const dt = new Date(Date.UTC(yyyy, mm - 1, dd));
   if (dt.getUTCFullYear() !== yyyy || dt.getUTCMonth() !== mm - 1 || dt.getUTCDate() !== dd) return null;
   return `${String(yyyy).padStart(4, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+}
+
+function getMapelScheduleBoundsWIB(mapel) {
+  if (!mapel?.tanggal_mulai) return { startMs: null, endMs: null };
+  const isoDate = parseDMYToISO(mapel.tanggal_mulai, null);
+  if (!isoDate) return { startMs: null, endMs: null };
+
+  const normalizeHHMMSS = (val, fallback) => {
+    const clean = String(val || fallback).trim();
+    const parts = clean.split(':');
+    const hh = String(parts[0] || '00').padStart(2, '0');
+    const mm = String(parts[1] || '00').padStart(2, '0');
+    const ss = String(parts[2] || '00').padStart(2, '0').slice(0, 2);
+    return `${hh}:${mm}:${ss}`;
+  };
+
+  const startStr = mapel.jam_mulai ? `${isoDate}T${normalizeHHMMSS(mapel.jam_mulai, '00:00:00')}+07:00` : null;
+  const endStr = mapel.jam_selesai ? `${isoDate}T${normalizeHHMMSS(mapel.jam_selesai, '23:59:59')}+07:00` : null;
+  const startMs = startStr ? Date.parse(startStr) : null;
+  const endMs = endStr ? Date.parse(endStr) : null;
+
+  return {
+    startMs: Number.isFinite(startMs) ? startMs : null,
+    endMs: Number.isFinite(endMs) ? endMs : null
+  };
+}
+
+function evaluateMapelAccessGuard(mapel) {
+  if (!mapel) return { blocked: true, reason: 'Paket ujian tidak ditemukan.', startMs: null, endMs: null };
+  if (String(mapel.status || '').toLowerCase() !== 'aktif') {
+    return {
+      blocked: true,
+      reason: 'Paket ujian telah ditutup oleh Admin / Proktor.',
+      startMs: null,
+      endMs: null
+    };
+  }
+  const nowMs = Date.now();
+  const { startMs, endMs } = getMapelScheduleBoundsWIB(mapel);
+  if (startMs !== null && nowMs < startMs) {
+    const jamMulai = String(mapel.jam_mulai || '00:00').slice(0, 5);
+    return {
+      blocked: true,
+      reason: `Ujian dijadwalkan mulai tanggal ${formatTanggalDMY(mapel.tanggal_mulai)} pukul ${jamMulai} WIB.`,
+      startMs,
+      endMs
+    };
+  }
+  if (endMs !== null && nowMs >= endMs) {
+    const jamSelesai = String(mapel.jam_selesai || '23:59').slice(0, 5);
+    return {
+      blocked: true,
+      reason: `Batas waktu jadwal ujian (${formatTanggalDMY(mapel.tanggal_mulai)} pukul ${jamSelesai} WIB) telah berakhir.`,
+      startMs,
+      endMs
+    };
+  }
+  return { blocked: false, reason: '', startMs, endMs };
 }
 
 function getSekolahById(id) {
@@ -1296,9 +1355,7 @@ function setupTargetedRealtime() {
             table: 'mapel'
           }, (payload) => {
             if (payload.new) {
-              const idx = STATE.mapelList.findIndex(m => m.id === payload.new.id);
-              if (idx >= 0) STATE.mapelList[idx] = { ...STATE.mapelList[idx], ...payload.new };
-              render();
+              handleStudentMapelRemoteUpdate(payload.new);
             }
           })
           .subscribe((status) => {
@@ -1313,27 +1370,28 @@ function setupTargetedRealtime() {
     STATE.fallbackPollInterval = setInterval(async () => {
       if (STATE.role !== 'siswa' || !STATE.user) return;
       try {
+        const activeMapelId = STATE.activeExamMapel?.id;
         if (IS_PREVIEW) {
           const latestJ = (MOCK_DB.jadwal_peserta || []).filter(j => j.siswa_id === siswaId);
           latestJ.forEach(handleStudentJadwalRemoteUpdate);
+          if (activeMapelId) {
+            const latestM = (MOCK_DB.mapel || []).find(m => m.id === activeMapelId);
+            if (latestM) handleStudentMapelRemoteUpdate(latestM);
+          }
           return;
         }
         if (!sb) return;
-        const activeMapelId = STATE.activeExamMapel?.id;
         const queries = [
           sb.from('jadwal_peserta').select('id,mapel_id,status_ujian,pelanggaran').eq('siswa_id', siswaId)
         ];
         if (activeMapelId) {
           queries.push(
-            sb.from('mapel').select('id,status,tanggal_mulai,jam_mulai,jam_selesai').eq('id', activeMapelId).maybeSingle()
+            sb.from('mapel').select('id,status,tanggal_mulai,jam_mulai,jam_selesai,durasi_menit').eq('id', activeMapelId).maybeSingle()
           );
         }
         const [jRes, mRes] = await Promise.all(queries);
         if (jRes?.data) jRes.data.forEach(handleStudentJadwalRemoteUpdate);
-        if (mRes?.data) {
-          const idx = STATE.mapelList.findIndex(m => m.id === mRes.data.id);
-          if (idx >= 0) STATE.mapelList[idx] = { ...STATE.mapelList[idx], ...mRes.data };
-        }
+        if (mRes?.data) handleStudentMapelRemoteUpdate(mRes.data);
       } catch (_) {}
     }, 30000);
     return;
@@ -1435,6 +1493,45 @@ function handleStudentJadwalRemoteUpdate(updatedRow) {
     STATE.antiCheatModal = false;
     saveStudentDraftToLocal();
     notify("Status login Anda telah di-reset oleh Proktor.", "success");
+    render();
+  }
+}
+
+function handleStudentMapelRemoteUpdate(updatedMapel) {
+  if (!updatedMapel || !updatedMapel.id) return;
+  const idx = STATE.mapelList.findIndex(m => String(m.id) === String(updatedMapel.id));
+  if (idx >= 0) {
+    STATE.mapelList[idx] = { ...STATE.mapelList[idx], ...updatedMapel };
+  }
+
+  if (
+    STATE.role === 'siswa' &&
+    STATE.siswaStep === 'ujian' &&
+    STATE.activeExamMapel &&
+    String(STATE.activeExamMapel.id) === String(updatedMapel.id)
+  ) {
+    STATE.activeExamMapel = { ...STATE.activeExamMapel, ...updatedMapel };
+    const guard = evaluateMapelAccessGuard(STATE.activeExamMapel);
+    if (guard.blocked) {
+      if (STATE.timerInterval) clearInterval(STATE.timerInterval);
+      executeSubmitExam(true, guard.reason);
+      return;
+    }
+    if (guard.endMs !== null) {
+      const currentEnd = STATE.activeExamEndTimeMs || guard.endMs;
+      if (guard.endMs < currentEnd) {
+        STATE.activeExamEndTimeMs = guard.endMs;
+        STATE.timeLeftSec = Math.max(0, Math.floor((STATE.activeExamEndTimeMs - Date.now()) / 1000));
+        const timerEl = document.getElementById('cbt-timer-display');
+        if (timerEl) timerEl.textContent = formatTime(STATE.timeLeftSec);
+        saveStudentDraftToLocal(STATE.activeExamEndTimeMs);
+        notify(`Jadwal ujian diperbarui. Batas akhir: ${String(STATE.activeExamMapel.jam_selesai || '').slice(0, 5)} WIB.`, "info");
+      }
+    }
+    return;
+  }
+
+  if (STATE.role === 'siswa' && STATE.siswaStep === 'konfirmasi') {
     render();
   }
 }
@@ -1786,21 +1883,6 @@ async function startStudentExam(mapelId) {
   await runWithBusyLock(`start-exam-${mapelId}`, async () => {
     const mapel = STATE.mapelList.find(m => m.id === mapelId);
     if (!mapel) return;
-    if (mapel.status !== 'Aktif') {
-      return notify("Paket ujian ini belum diaktifkan oleh Admin.", "error");
-    }
-
-    const wib = getWIBNow();
-    const todayStr = wib.toISOString().slice(0, 10);
-    const timeStr = wib.toTimeString().slice(0, 8);
-    if (mapel.tanggal_mulai && todayStr < mapel.tanggal_mulai) {
-      return notify(`Ujian dijadwalkan mulai tanggal ${formatTanggalDMY(mapel.tanggal_mulai)} WIB.`, "error");
-    }
-    if (mapel.jam_mulai && mapel.jam_selesai && todayStr === mapel.tanggal_mulai) {
-      if (timeStr < mapel.jam_mulai || timeStr > mapel.jam_selesai) {
-        return notify(`Waktu ujian aktif pukul ${mapel.jam_mulai} - ${mapel.jam_selesai} WIB.`, "error");
-      }
-    }
 
     STATE.loading = true;
     render();
@@ -1815,14 +1897,21 @@ async function startStudentExam(mapelId) {
             .eq('id', mapelId)
             .maybeSingle();
           if (metaRow) {
-            if (metaRow.status && metaRow.status !== 'Aktif') {
-              STATE.loading = false;
-              render();
-              return notify("Paket ujian baru saja dinonaktifkan oleh Admin.", "error");
-            }
             latestMapelMeta = { ...mapel, ...metaRow };
+            const mIdx = STATE.mapelList.findIndex(m => m.id === mapelId);
+            if (mIdx >= 0) STATE.mapelList[mIdx] = latestMapelMeta;
           }
         } catch (_) {}
+      } else if (IS_PREVIEW) {
+        const freshMock = (MOCK_DB.mapel || []).find(m => m.id === mapelId);
+        if (freshMock) latestMapelMeta = { ...mapel, ...freshMock };
+      }
+
+      const accessGuard = evaluateMapelAccessGuard(latestMapelMeta);
+      if (accessGuard.blocked) {
+        STATE.loading = false;
+        render();
+        return notify(accessGuard.reason, "error");
       }
 
       const serverStampStr = latestMapelMeta.updated_at || latestMapelMeta.created_at || '';
@@ -1904,30 +1993,41 @@ async function startStudentExam(mapelId) {
       }
 
       const nowMs = Date.now();
-      const durationMs = (Number(mapel.durasi_menit) || 60) * 60 * 1000;
-      const endTimeMs = (draft && draft.endTimeMs) ? draft.endTimeMs : (nowMs + durationMs);
+      const durationMs = (Number(latestMapelMeta.durasi_menit) || 60) * 60 * 1000;
+      const durationEndMs = (draft && draft.endTimeMs) ? draft.endTimeMs : (nowMs + durationMs);
+      const effectiveEndTimeMs = accessGuard.endMs !== null
+        ? Math.min(durationEndMs, accessGuard.endMs)
+        : durationEndMs;
+
+      if (effectiveEndTimeMs <= nowMs) {
+        STATE.loading = false;
+        render();
+        return notify(`Batas waktu jadwal ujian (${String(latestMapelMeta.jam_selesai || '').slice(0, 5)} WIB) telah berakhir.`, "error");
+      }
+
       const jadwal = STATE.jadwalList.find(j => j.mapel_id === mapelId);
       const serverViolations = Number(jadwal?.pelanggaran) || 0;
 
-      STATE.activeExamMapel = mapel;
+      STATE.activeExamMapel = latestMapelMeta;
+      STATE.activeExamEndTimeMs = effectiveEndTimeMs;
       STATE.examStimuli = pkgData.stimuli;
       STATE.examSoal = orderedSoal;
       STATE.currentIdx = 0;
       STATE.answers = (draft && draft.answers) ? draft.answers : {};
       STATE.ragu = (draft && draft.ragu) ? draft.ragu : {};
       STATE.violationCount = serverViolations === 0 ? 0 : ((draft && draft.violations) ? draft.violations : 0);
-      STATE.timeLeftSec = Math.max(1, Math.floor((endTimeMs - nowMs) / 1000));
+      STATE.timeLeftSec = Math.max(1, Math.floor((effectiveEndTimeMs - nowMs) / 1000));
       STATE.lastSyncedSnapshotHash = JSON.stringify(STATE.answers);
       STATE.siswaStep = 'ujian';
 
-      saveStudentDraftToLocal(endTimeMs);
+      saveStudentDraftToLocal(effectiveEndTimeMs);
 
       if (jadwal && jadwal.status_ujian === 'Belum Mulai') {
         await dbUpdate('jadwal_peserta', jadwal.id, { status_ujian: 'Sedang Mengerjakan' }, STATE.user.sekolah_id);
         jadwal.status_ujian = 'Sedang Mengerjakan';
       }
 
-      startExamTimer(endTimeMs);
+      startExamTimer(effectiveEndTimeMs);
       startPeriodicAutoSave();
       attachAntiCheatListeners();
     } catch (err) {
@@ -1939,84 +2039,19 @@ async function startStudentExam(mapelId) {
   });
 }
 
-function saveStudentDraftToLocal(customEndTimeMs = null) {
-  if (!STATE.user || !STATE.activeExamMapel) return;
-  const draftKey = `cbt_draft_${STATE.user.id}_${STATE.activeExamMapel.id}`;
-  const prev = JSON.parse(localStorage.getItem(draftKey) || '{}');
-  const opsiOrder = {};
-  STATE.examSoal.forEach(q => { if (q._opsiKeys) opsiOrder[q.id] = q._opsiKeys; });
-
-  localStorage.setItem(draftKey, JSON.stringify({
-    soalOrder: STATE.examSoal.map(q => q.id),
-    opsiOrder,
-    answers: STATE.answers,
-    ragu: STATE.ragu,
-    violations: STATE.violationCount,
-    startedAt: prev.startedAt || new Date().toISOString(),
-    endTimeMs: customEndTimeMs || prev.endTimeMs || (Date.now() + STATE.timeLeftSec * 1000)
-  }));
-}
-
-function onStudentTextAnswerInput(soalId, value) {
-  STATE.answers[soalId] = value;
-  if (STATE.textSaveDebounceTimer) clearTimeout(STATE.textSaveDebounceTimer);
-  STATE.textSaveDebounceTimer = setTimeout(() => {
-    saveStudentDraftToLocal();
-  }, 500);
-}
-
-function startPeriodicAutoSave() {
-  if (STATE.periodicAutoSaveInterval) clearInterval(STATE.periodicAutoSaveInterval);
-  STATE.periodicAutoSaveInterval = setInterval(async () => {
-    if (STATE.role !== 'siswa' || STATE.siswaStep !== 'ujian' || !STATE.activeExamMapel) return;
-    saveStudentDraftToLocal();
-    const currentHash = JSON.stringify(STATE.answers);
-    if (currentHash === STATE.lastSyncedSnapshotHash) return;
-    STATE.lastSyncedSnapshotHash = currentHash;
-
-    try {
-      const jadwal = STATE.jadwalList.find(j => j.mapel_id === STATE.activeExamMapel.id);
-      if (jadwal && jadwal.status_ujian === 'Sedang Mengerjakan') {
-        await dbUpdate('jadwal_peserta', jadwal.id, {
-          status_ujian: 'Sedang Mengerjakan',
-          pelanggaran: STATE.violationCount
-        }, STATE.user.sekolah_id);
-      }
-    } catch (_) {}
-  }, 45000);
-}
-
-function startExamTimer(endTimeMs) {
-  if (STATE.timerInterval) clearInterval(STATE.timerInterval);
-  STATE.timerInterval = setInterval(() => {
-    const left = Math.floor((endTimeMs - Date.now()) / 1000);
-    STATE.timeLeftSec = Math.max(0, left);
-    const timerEl = document.getElementById('cbt-timer-display');
-    if (timerEl) timerEl.textContent = formatTime(STATE.timeLeftSec);
-    if (left <= 0) {
-      clearInterval(STATE.timerInterval);
-      executeSubmitExam(true);
-    }
-  }, 1000);
-}
-
 /* ============================================================================
-   FITUR LAYAR PENUH (FULLSCREEN), ZOOM GAMBAR STIMULUS & PROTEKSI ESC/WINDOWS
+   FULLSCREEN, ZOOM GAMBAR STIMULUS, HANDLER JAWABAN, TIMER & ANTI-CHEAT SISWA
    ============================================================================ */
 async function enterExamFullscreen() {
   try {
     const el = document.documentElement;
-    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-      if (el.requestFullscreen) await el.requestFullscreen();
-      else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
-      else if (el.msRequestFullscreen) await el.msRequestFullscreen();
+    if (!document.fullscreenElement && el && el.requestFullscreen) {
+      await el.requestFullscreen();
     }
     if (navigator.keyboard && typeof navigator.keyboard.lock === 'function') {
       await navigator.keyboard.lock(['Escape']).catch(() => {});
     }
-  } catch (_) {
-    // Abaikan jika browser/perangkat membatasi Fullscreen API
-  }
+  } catch (_) {}
 }
 
 function exitExamFullscreen() {
@@ -2026,157 +2061,121 @@ function exitExamFullscreen() {
     }
     if (document.fullscreenElement && document.exitFullscreen) {
       document.exitFullscreen().catch(() => {});
-    } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
-      document.webkitExitFullscreen();
     }
   } catch (_) {}
 }
 
-function openStimulusZoom(src, caption = 'Gambar Stimulus') {
+function openStimulusZoom(src, caption = 'Perbesar Gambar Stimulus') {
   if (!src) return;
-  const existing = document.getElementById('cbt-stimulus-zoom-modal');
+  const existing = document.getElementById('stimulus-zoom-modal');
   if (existing) existing.remove();
 
   let scale = 1;
   const modal = document.createElement('div');
-  modal.id = 'cbt-stimulus-zoom-modal';
-  modal.className = 'no-print fixed inset-0 z-[9999999] bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-3 sm:p-5 select-none';
+  modal.id = 'stimulus-zoom-modal';
+  modal.className = 'fixed inset-0 z-[999999] bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center p-4 select-none';
   modal.innerHTML = `
-    <div class="w-full max-w-5xl flex flex-wrap items-center justify-between gap-2 text-white mb-3">
-      <span class="text-xs sm:text-sm font-bold bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-700 truncate max-w-full">
+    <div class="w-full max-w-5xl flex flex-wrap items-center justify-between gap-2 text-white mb-3 px-2">
+      <span class="text-xs sm:text-sm font-bold tracking-wide bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
         🔍 ${esc(caption)}
       </span>
-      <div class="flex items-center gap-1.5">
-        <button type="button" id="cbt-zoom-out" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">− Perkecil</button>
-        <button type="button" id="cbt-zoom-reset" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">100%</button>
-        <button type="button" id="cbt-zoom-in" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">+ Perbesar</button>
-        <button type="button" id="cbt-zoom-close" class="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-xs font-extrabold shadow">✕ Tutup</button>
+      <div class="flex items-center gap-2">
+        <button type="button" id="zoom-out-btn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">− Perkecil</button>
+        <button type="button" id="zoom-reset-btn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">100%</button>
+        <button type="button" id="zoom-in-btn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">+ Perbesar</button>
+        <button type="button" id="zoom-close-btn" class="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-xs font-bold shadow">✕ Tutup</button>
       </div>
     </div>
-    <div id="cbt-zoom-stage" class="w-full max-w-5xl max-h-[82vh] overflow-auto flex items-center justify-center rounded-2xl bg-white/5 p-3">
-      <img id="cbt-zoom-img" src="${esc(src)}" alt="Perbesar Stimulus"
-        class="max-w-full max-h-[78vh] object-contain rounded-xl shadow-2xl bg-white p-1.5 transition-transform duration-150"
-        style="transform: scale(1); transform-origin: center center;" />
+    <div id="zoom-stage" class="w-full max-w-5xl max-h-[82vh] overflow-auto flex items-center justify-center rounded-xl bg-white/5 p-3">
+      <img id="zoom-target-img" src="${esc(src)}" alt="Stimulus" class="max-w-full max-h-[78vh] object-contain rounded-lg shadow-2xl transition-transform duration-150 bg-white p-1" style="transform: scale(1); transform-origin: center center;" />
     </div>
   `;
+
   document.body.appendChild(modal);
+  const imgEl = modal.querySelector('#zoom-target-img');
+  const applyScale = () => { if (imgEl) imgEl.style.transform = `scale(${scale})`; };
 
-  const imgEl = modal.querySelector('#cbt-zoom-img');
-  const applyScale = () => { imgEl.style.transform = `scale(${scale})`; };
-  modal.querySelector('#cbt-zoom-in').onclick = (ev) => { ev.stopPropagation(); scale = Math.min(3, +(scale + 0.25).toFixed(2)); applyScale(); };
-  modal.querySelector('#cbt-zoom-out').onclick = (ev) => { ev.stopPropagation(); scale = Math.max(0.75, +(scale - 0.25).toFixed(2)); applyScale(); };
-  modal.querySelector('#cbt-zoom-reset').onclick = (ev) => { ev.stopPropagation(); scale = 1; applyScale(); };
-  modal.querySelector('#cbt-zoom-close').onclick = () => modal.remove();
-  modal.onclick = (ev) => {
-    if (ev.target === modal || ev.target.id === 'cbt-zoom-stage') modal.remove();
-  };
+  modal.querySelector('#zoom-in-btn')?.addEventListener('click', (e) => { e.stopPropagation(); scale = Math.min(3, +(scale + 0.25).toFixed(2)); applyScale(); });
+  modal.querySelector('#zoom-out-btn')?.addEventListener('click', (e) => { e.stopPropagation(); scale = Math.max(0.75, +(scale - 0.25).toFixed(2)); applyScale(); });
+  modal.querySelector('#zoom-reset-btn')?.addEventListener('click', (e) => { e.stopPropagation(); scale = 1; applyScale(); });
+  modal.querySelector('#zoom-close-btn')?.addEventListener('click', () => modal.remove());
+  modal.addEventListener('click', (e) => { if (e.target === modal || e.target.id === 'zoom-stage') modal.remove(); });
 }
 
-let lastSecurityTriggerAt = 0;
-async function triggerStudentSecurityViolation(reasonText, isFullscreenExit = false) {
-  if (STATE.role !== 'siswa') return;
-  const now = Date.now();
-  if (now - lastSecurityTriggerAt < 1200) return;
-  lastSecurityTriggerAt = now;
-
-  // Tutup modal zoom jika sedang terbuka agar peringatan langsung terlihat
-  const zoomModal = document.getElementById('cbt-stimulus-zoom-modal');
-  if (zoomModal) zoomModal.remove();
-
-  // Jika siswa masih di halaman konfirmasi (belum masuk soal), cukup beri peringatan tanpa mengunci akun
-  if (STATE.siswaStep !== 'ujian' || !STATE.activeExamMapel) {
-    if (!isFullscreenExit) {
-      showInfoModal(
-        "Peringatan Keamanan Layar Ujian",
-        `${reasonText} Tetap berada di mode Layar Penuh agar sesi ujian Anda tidak terganggu.`
-      );
-    } else {
-      notify("Mode layar penuh dinonaktifkan. Klik tombol Mulai Ujian untuk kembali ke layar penuh.", "info");
-    }
-    return;
+document.addEventListener('click', (e) => {
+  const img = e.target.closest('img');
+  if (!img) return;
+  const inExamView = img.closest('#student-exam-view');
+  if (inExamView && !img.closest('header, nav')) {
+    openStimulusZoom(img.src, img.alt || 'Perbesar Gambar Stimulus');
   }
+});
 
-  STATE.violationCount += 1;
-  STATE.antiCheatReason = reasonText;
-  saveStudentDraftToLocal();
-  STATE.antiCheatModal = true;
-
-  if (STATE.violationCount >= 3) {
-    const jadwal = STATE.jadwalList.find(j => j.mapel_id === STATE.activeExamMapel.id);
-    if (jadwal) {
-      await dbUpdate('jadwal_peserta', jadwal.id, {
-        status_ujian: 'Terkunci',
-        pelanggaran: STATE.violationCount
-      }, STATE.user.sekolah_id);
-    }
-    clearInterval(STATE.timerInterval);
-    if (STATE.periodicAutoSaveInterval) clearInterval(STATE.periodicAutoSaveInterval);
-    const lockedSchool = getSekolahById(STATE.user.sekolah_id);
-    await handleLogout();
-    showInfoModal(
-      "AKUN UJIAN TERKUNCI (3x Pelanggaran)",
-      `Sistem mengunci sesi ujian Anda karena terdeteksi melanggar aturan keamanan layar sebanyak 3 kali (${reasonText}). Silakan hubungi Proktor ${lockedSchool.nama_sekolah} untuk membuka kunci (Reset Login).`
-    );
-    return;
-  }
-  render();
+function saveStudentDraftToLocal(customEndTimeMs = null) {
+  if (!STATE.user?.id || !STATE.activeExamMapel?.id) return;
+  try {
+    const opsiOrder = {};
+    (STATE.examSoal || []).forEach(q => {
+      if (Array.isArray(q._opsiKeys)) opsiOrder[q.id] = q._opsiKeys;
+    });
+    const draftPayload = {
+      answers: STATE.answers || {},
+      ragu: STATE.ragu || {},
+      violations: STATE.violationCount || 0,
+      endTimeMs: customEndTimeMs || STATE.activeExamEndTimeMs || (Date.now() + ((STATE.timeLeftSec || 0) * 1000)),
+      soalOrder: (STATE.examSoal || []).map(q => q.id),
+      opsiOrder
+    };
+    localStorage.setItem(`cbt_draft_${STATE.user.id}_${STATE.activeExamMapel.id}`, JSON.stringify(draftPayload));
+  } catch (_) {}
 }
 
-let antiCheatAttached = false;
-function attachAntiCheatListeners() {
-  if (antiCheatAttached) return;
-  antiCheatAttached = true;
+function startExamTimer(endTimeMs) {
+  if (STATE.timerInterval) clearInterval(STATE.timerInterval);
+  STATE.activeExamEndTimeMs = endTimeMs;
 
-  // 1. Deteksi pindah tab / minimize browser
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && STATE.role === 'siswa' && STATE.siswaStep === 'ujian' && STATE.activeExamMapel) {
-      triggerStudentSecurityViolation('Anda terdeteksi berpindah tab atau meninggalkan layar ujian.');
+  STATE.timerInterval = setInterval(() => {
+    if (STATE.role !== 'siswa' || STATE.siswaStep !== 'ujian' || !STATE.activeExamMapel) {
+      clearInterval(STATE.timerInterval);
+      STATE.timerInterval = null;
+      return;
     }
-  });
 
-  // 2. Batasi & beri peringatan saat tombol ESC atau Logo Windows (Meta/OS) ditekan
-  window.addEventListener('keydown', (e) => {
-    if (STATE.role !== 'siswa') return;
-    const isEsc = e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27;
-    const isWinKey = e.key === 'Meta' || e.key === 'OS' || e.keyCode === 91 || e.keyCode === 92;
-    if (isEsc || isWinKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      const namaTombol = isEsc ? 'ESC' : 'Logo Windows';
-      triggerStudentSecurityViolation(`Anda dilarang menekan tombol [${namaTombol}] selama sesi ujian berlangsung!`);
-      enterExamFullscreen();
+    const guard = evaluateMapelAccessGuard(STATE.activeExamMapel);
+    if (guard.blocked) {
+      clearInterval(STATE.timerInterval);
+      STATE.timerInterval = null;
+      executeSubmitExam(true, guard.reason);
+      return;
     }
-  }, true);
 
-  // 3. Tangkap pelepasan tombol Logo Windows (sering dicegat OS saat keydown)
-  window.addEventListener('keyup', (e) => {
-    if (STATE.role !== 'siswa') return;
-    const isWinKey = e.key === 'Meta' || e.key === 'OS' || e.keyCode === 91 || e.keyCode === 92;
-    if (isWinKey) {
-      e.preventDefault();
-      e.stopPropagation();
-      triggerStudentSecurityViolation('Anda dilarang menggunakan tombol [Logo Windows] selama sesi ujian berlangsung!');
-      enterExamFullscreen();
+    const effectiveEnd = guard.endMs !== null
+      ? Math.min(STATE.activeExamEndTimeMs, guard.endMs)
+      : STATE.activeExamEndTimeMs;
+    const remaining = Math.max(0, Math.floor((effectiveEnd - Date.now()) / 1000));
+    STATE.timeLeftSec = remaining;
+
+    const timerEl = document.getElementById('cbt-timer-display');
+    if (timerEl) timerEl.textContent = formatTime(remaining);
+
+    if (remaining <= 0) {
+      clearInterval(STATE.timerInterval);
+      STATE.timerInterval = null;
+      executeSubmitExam(true, 'Waktu pengerjaan ujian telah habis.');
     }
-  }, true);
+  }, 1000);
+}
 
-  // 4. Deteksi jika siswa keluar dari mode Layar Penuh (misal karena ESC sistem)
-  document.addEventListener('fullscreenchange', () => {
-    if (STATE.role === 'siswa' && !document.fullscreenElement) {
-      triggerStudentSecurityViolation('Anda keluar dari mode Layar Penuh (Fullscreen). Dilarang menekan ESC atau keluar dari layar penuh selama ujian!', true);
-    }
-  });
-
-  // 5. Otomatis aktifkan klik-perbesar untuk semua gambar di dalam stimulus/soal ujian siswa
-  document.addEventListener('click', (e) => {
+function startPeriodicAutoSave() {
+  if (STATE.periodicAutoSaveInterval) clearInterval(STATE.periodicAutoSaveInterval);
+  STATE.periodicAutoSaveInterval = setInterval(() => {
     if (STATE.role !== 'siswa' || STATE.siswaStep !== 'ujian') return;
-    const img = e.target.closest('img');
-    if (!img) return;
-    if (img.closest('#cbt-stimulus-zoom-modal') || img.closest('header') || img.closest('nav')) return;
-    if (img.closest('#student-exam-view')) {
-      openStimulusZoom(img.src, img.alt || 'Perbesar Gambar Stimulus');
+    const currentHash = JSON.stringify({ a: STATE.answers, r: STATE.ragu });
+    if (currentHash !== STATE.lastSyncedSnapshotHash) {
+      STATE.lastSyncedSnapshotHash = currentHash;
+      saveStudentDraftToLocal();
     }
-  });
+  }, 15000);
 }
 
 function setStudentAnswer(soalId, value) {
@@ -2185,96 +2184,204 @@ function setStudentAnswer(soalId, value) {
   render();
 }
 
-function toggleStudentPGK(soalId, optKey) {
+function toggleStudentPGK(soalId, key) {
   const cur = Array.isArray(STATE.answers[soalId]) ? [...STATE.answers[soalId]] : [];
-  const idx = cur.indexOf(optKey);
+  const idx = cur.indexOf(key);
   if (idx >= 0) cur.splice(idx, 1);
-  else cur.push(optKey);
+  else cur.push(key);
   STATE.answers[soalId] = cur;
   saveStudentDraftToLocal();
   render();
 }
 
-function setStudentSubAnswer(soalId, subKey, val) {
-  const cur = (typeof STATE.answers[soalId] === 'object' && STATE.answers[soalId] !== null && !Array.isArray(STATE.answers[soalId]))
+function setStudentSubAnswer(soalId, subKey, value) {
+  const cur = (STATE.answers[soalId] && typeof STATE.answers[soalId] === 'object' && !Array.isArray(STATE.answers[soalId]))
     ? { ...STATE.answers[soalId] }
     : {};
-  if (val === '' || val === null || val === undefined) {
-    delete cur[subKey];
-  } else {
-    cur[subKey] = val;
-  }
+  cur[subKey] = value;
   STATE.answers[soalId] = cur;
   saveStudentDraftToLocal();
   render();
+}
+
+function onStudentTextAnswerInput(soalId, value) {
+  STATE.answers[soalId] = value;
+  if (STATE.textSaveDebounceTimer) clearTimeout(STATE.textSaveDebounceTimer);
+  STATE.textSaveDebounceTimer = setTimeout(() => {
+    saveStudentDraftToLocal();
+  }, 400);
 }
 
 function toggleStudentRagu(soalId) {
+  if (!soalId) return;
   if (STATE.ragu[soalId]) delete STATE.ragu[soalId];
   else STATE.ragu[soalId] = true;
   saveStudentDraftToLocal();
   render();
 }
 
-function promptSubmitStudentExam() {
-  const raguCount = Object.keys(STATE.ragu).length;
-  const msg = raguCount > 0
-    ? `Masih ada ${raguCount} soal ditandai RAGU-RAGU. Apakah Anda yakin ingin mengakhiri ujian dan mengirim seluruh jawaban sekarang?`
-    : "Apakah Anda yakin ingin mengakhiri ujian dan mengirim seluruh jawaban? Jawaban tidak dapat diubah setelah dikirim.";
-  askConfirm("Konfirmasi Selesai Ujian", msg, () => executeSubmitExam(false), "Ya, Kirim Jawaban", false);
-}
+async function executeSubmitExam(isAuto = false, autoReason = '') {
+  if (!STATE.activeExamMapel || !STATE.user) return;
+  await runWithBusyLock('submit-student-exam', async () => {
+    if (STATE.timerInterval) {
+      clearInterval(STATE.timerInterval);
+      STATE.timerInterval = null;
+    }
+    if (STATE.periodicAutoSaveInterval) {
+      clearInterval(STATE.periodicAutoSaveInterval);
+      STATE.periodicAutoSaveInterval = null;
+    }
 
-async function executeSubmitExam(isAutoTimeout = false) {
-  await runWithBusyLock('submit-exam', async () => {
-    if (STATE.timerInterval) clearInterval(STATE.timerInterval);
-    if (STATE.periodicAutoSaveInterval) clearInterval(STATE.periodicAutoSaveInterval);
-    if (STATE.textSaveDebounceTimer) clearTimeout(STATE.textSaveDebounceTimer);
-    saveStudentDraftToLocal();
-    STATE.loading = true;
-    render();
+    const mapelId = STATE.activeExamMapel.id;
+    const siswaId = STATE.user.id;
+    const sekolahId = STATE.user.sekolah_id;
 
     try {
-      const mapelId = STATE.activeExamMapel.id;
-      const draftKey = `cbt_draft_${STATE.user.id}_${mapelId}`;
-      const draft = JSON.parse(localStorage.getItem(draftKey) || '{}');
-      const calc = calculateExamResult(STATE.examSoal, STATE.answers);
-
-      const payload = {
-        sekolah_id: STATE.user.sekolah_id,
-        siswa_id: STATE.user.id,
+      const calc = calculateExamResult(STATE.examSoal || [], STATE.answers || {});
+      const hasilPayload = {
+        sekolah_id: sekolahId,
+        siswa_id: siswaId,
         mapel_id: mapelId,
-        skor_akhir: calc.skor_akhir,
-        total_skor_mentah: calc.total_skor_mentah,
-        total_bobot_maks: calc.total_bobot_maks,
-        jumlah_benar: calc.jumlah_benar,
-        jumlah_salah: calc.jumlah_salah,
-        jumlah_parsial: calc.jumlah_parsial,
-        jumlah_kosong: calc.jumlah_kosong,
-        detail_jawaban: calc.detail_jawaban,
-        status: calc.status,
-        waktu_mulai: draft.startedAt || new Date().toISOString(),
+        ...calc,
         waktu_selesai: new Date().toISOString()
       };
 
-      await dbUpsert('hasil_ujian', payload, 'siswa_id,mapel_id');
+      await dbUpsert('hasil_ujian', hasilPayload, 'siswa_id,mapel_id');
 
-      const jadwal = STATE.jadwalList.find(j => j.mapel_id === mapelId);
+      const jadwal = STATE.jadwalList.find(j => String(j.mapel_id) === String(mapelId));
       if (jadwal) {
-        await dbUpdate('jadwal_peserta', jadwal.id, { status_ujian: 'Selesai' }, STATE.user.sekolah_id);
+        await dbUpdate('jadwal_peserta', jadwal.id, { status_ujian: 'Selesai' }, sekolahId);
         jadwal.status_ujian = 'Selesai';
       }
 
-      localStorage.removeItem(draftKey);
+      localStorage.removeItem(`cbt_draft_${siswaId}_${mapelId}`);
       STATE.lastResult = calc;
+      STATE.antiCheatModal = false;
+      STATE.showDaftarSoal = false;
       STATE.siswaStep = 'selesai';
-      notify(isAutoTimeout ? "Waktu habis! Jawaban otomatis terkirim." : "Ujian selesai & jawaban berhasil disimpan.", "success");
-    } catch (err) {
-      notify("Gagal mengirim jawaban: " + err.message, "error");
-    } finally {
-      STATE.loading = false;
       render();
+
+      if (isAuto && autoReason) {
+        showInfoModal(
+          "Ujian Dihentikan Otomatis",
+          `${autoReason} Seluruh jawaban yang sudah Anda isi telah disimpan otomatis ke sistem.`
+        );
+      } else {
+        notify("Jawaban ujian berhasil dikirim dan disimpan!", "success");
+      }
+    } catch (err) {
+      notify("Gagal mengirim jawaban ujian: " + err.message, "error");
     }
   });
+}
+
+let antiCheatListenersAttached = false;
+let lastAntiCheatWarnAt = 0;
+
+async function recordStudentViolation(reasonText) {
+  if (STATE.role !== 'siswa' || STATE.siswaStep !== 'ujian' || !STATE.activeExamMapel) return;
+  const now = Date.now();
+  if (now - lastAntiCheatWarnAt < 1500) return;
+  lastAntiCheatWarnAt = now;
+
+  const zoomModal = document.getElementById('stimulus-zoom-modal');
+  if (zoomModal) zoomModal.remove();
+
+  STATE.violationCount = (Number(STATE.violationCount) || 0) + 1;
+  STATE.antiCheatReason = reasonText;
+  saveStudentDraftToLocal();
+
+  const jadwal = STATE.jadwalList.find(j => String(j.mapel_id) === String(STATE.activeExamMapel.id));
+  const isLockedNow = STATE.violationCount >= 3;
+
+  if (jadwal) {
+    try {
+      const patch = isLockedNow
+        ? { pelanggaran: STATE.violationCount, status_ujian: 'Terkunci' }
+        : { pelanggaran: STATE.violationCount };
+      await dbUpdate('jadwal_peserta', jadwal.id, patch, STATE.user.sekolah_id);
+      jadwal.pelanggaran = STATE.violationCount;
+      if (isLockedNow) jadwal.status_ujian = 'Terkunci';
+    } catch (_) {}
+  }
+
+  if (isLockedNow) {
+    if (STATE.timerInterval) clearInterval(STATE.timerInterval);
+    if (STATE.periodicAutoSaveInterval) clearInterval(STATE.periodicAutoSaveInterval);
+    STATE.antiCheatModal = false;
+    await handleLogout();
+    showInfoModal(
+      "Akun Ujian Terkunci (Anti-Cheat)",
+      `Anda mencapai batas 3x pelanggaran keamanan (${reasonText}). Hubungi Proktor sekolah Anda untuk melakukan Reset Login.`
+    );
+    return;
+  }
+
+  STATE.antiCheatModal = true;
+  render();
+}
+
+function attachAntiCheatListeners() {
+  if (antiCheatListenersAttached) return;
+  antiCheatListenersAttached = true;
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && STATE.role === 'siswa' && STATE.siswaStep === 'ujian') {
+      recordStudentViolation('Anda terdeteksi berpindah tab atau meminimalkan jendela browser.');
+    }
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (STATE.role !== 'siswa' || STATE.siswaStep !== 'ujian') return;
+    const isEsc = e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27;
+    const isWin = e.key === 'Meta' || e.key === 'OS' || e.keyCode === 91 || e.keyCode === 92;
+    if (isEsc || isWin) {
+      e.preventDefault();
+      e.stopPropagation();
+      const keyLabel = isEsc ? 'ESC' : 'Logo Windows';
+      recordStudentViolation(`Anda menekan tombol terlarang [${keyLabel}] selama ujian berlangsung.`);
+      enterExamFullscreen();
+    }
+  }, true);
+
+  window.addEventListener('keyup', (e) => {
+    if (STATE.role !== 'siswa' || STATE.siswaStep !== 'ujian') return;
+    if (e.key === 'Meta' || e.key === 'OS' || e.keyCode === 91 || e.keyCode === 92) {
+      e.preventDefault();
+      recordStudentViolation('Tombol [Logo Windows] dilarang digunakan selama sesi ujian berlangsung.');
+      enterExamFullscreen();
+    }
+  }, true);
+
+  document.addEventListener('fullscreenchange', () => {
+    if (STATE.role === 'siswa' && STATE.siswaStep === 'ujian' && !document.fullscreenElement) {
+      recordStudentViolation('Anda keluar dari mode Layar Penuh (Fullscreen) ujian.');
+    }
+  });
+}
+
+function promptSubmitStudentExam() {
+  if (!STATE.activeExamMapel || !STATE.examSoal?.length) return;
+  let unanswered = 0;
+  let raguCount = 0;
+  STATE.examSoal.forEach(item => {
+    const ans = STATE.answers[item.id];
+    const hasAns = ans !== undefined && ans !== null && ans !== '' &&
+      !(Array.isArray(ans) && ans.length === 0) &&
+      !(typeof ans === 'object' && !Array.isArray(ans) && Object.values(ans).every(v => v === '' || v === null || v === undefined));
+    if (!hasAns) unanswered++;
+    if (STATE.ragu[item.id]) raguCount++;
+  });
+  const detailMsg = (unanswered > 0 || raguCount > 0)
+    ? `Masih ada ${unanswered} soal belum dijawab dan ${raguCount} soal ditandai ragu-ragu. Yakin ingin mengakhiri ujian dan mengirim jawaban sekarang?`
+    : 'Semua soal sudah terjawab. Yakin ingin mengakhiri ujian dan mengirim jawaban sekarang?';
+  askConfirm(
+    "Konfirmasi Selesai Ujian",
+    detailMsg,
+    () => executeSubmitExam(false),
+    "Ya, Kirim Jawaban",
+    false
+  );
 }
 
 /* ============================================================================
@@ -4507,19 +4614,27 @@ function renderSiswaPortal() {
                   <h3 class="text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-3">Paket Ujian Dijadwalkan</h3>
                   ${myJadwal.length === 0
                     ? `<p class="text-xs text-slate-500">Belum ada jadwal paket ujian yang ditugaskan untuk akun Anda.</p>`
-                    : myJadwal.map(j => `
+                    : myJadwal.map(j => {
+                      const guard = evaluateMapelAccessGuard(j.mapel);
+                      return `
                       <div class="bg-white p-4 rounded-2xl border border-slate-200 mb-3 shadow-xs">
                         <div class="font-bold text-sm text-slate-900">${esc(j.mapel.nama_mapel)}</div>
-                        <div class="text-xs text-slate-500 mt-1">Durasi: <strong>${j.mapel.durasi_menit} Menit</strong> • Status: <strong>${esc(j.status_ujian)}</strong></div>
+                        <div class="text-xs text-slate-500 mt-1">
+                          Durasi: <strong>${j.mapel.durasi_menit} Menit</strong> • Jadwal: <strong>${esc(formatTanggalDMY(j.mapel.tanggal_mulai))} (${esc(String(j.mapel.jam_mulai || '00:00').slice(0,5))} - ${esc(String(j.mapel.jam_selesai || '23:59').slice(0,5))} WIB)</strong>
+                        </div>
+                        <div class="text-xs text-slate-500 mt-0.5">Status Peserta: <strong>${esc(j.status_ujian)}</strong></div>
                         <div class="mt-3">
                           ${j.status_ujian === 'Selesai'
                             ? `<span class="inline-block w-full text-center py-2.5 rounded-xl bg-emerald-100 text-emerald-800 text-xs font-extrabold">✓ Sudah Dikerjakan</span>`
-                            : `<button onclick="CBT.startExam('${j.mapel_id}')" class="w-full py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-extrabold shadow transition">
-                                ${j.status_ujian === 'Sedang Mengerjakan' ? 'LANJUTKAN UJIAN →' : 'MULAI UJIAN SEKARANG →'}
-                               </button>`}
+                            : (guard.blocked
+                              ? `<span class="inline-block w-full text-center py-2.5 px-3 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 text-xs font-extrabold">⏸ ${esc(guard.reason)}</span>`
+                              : `<button onclick="CBT.startExam('${j.mapel_id}')" class="w-full py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-extrabold shadow transition">
+                                  ${j.status_ujian === 'Sedang Mengerjakan' ? 'LANJUTKAN UJIAN →' : 'MULAI UJIAN SEKARANG →'}
+                                 </button>`)}
                         </div>
                       </div>
-                    `).join('')}
+                    `;
+                    }).join('')}
                 </div>
                 <p class="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 p-3 rounded-xl mt-2">
                   <strong>Perhatian:</strong> Dilarang berpindah tab atau keluar layar ujian selama pengerjaan. Pelanggaran 3x akan mengunci akun otomatis.
