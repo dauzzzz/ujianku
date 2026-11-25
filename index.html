@@ -528,8 +528,14 @@ const STATE = {
   selectedSiswaIds: [],
   koreksiHasilId: null,
   editSoalId: null,
+  editSiswaId: null,
+  editProktorId: null,
+  editRuangId: null,
+  editSesiId: null,
   newSoalNomor: null,
   formStimulusId: undefined,
+  mapelModalOpen: false,
+  editMapelId: null,
   cardPrintMode: 'all',
   cardSingleSiswaId: '',
   cardShowQR: false,
@@ -565,6 +571,10 @@ const STATE = {
 
 const CHUNK_SIZE = 100;
 let activeQuillPertanyaan = null;
+
+function isBusy(key) {
+  return !!STATE.busyKeys[key];
+}
 
 async function runWithBusyLock(key, fn, triggerBtn = null) {
   if (STATE.busyKeys[key]) return;
@@ -858,19 +868,26 @@ async function dbUpdate(table, id, payload, enforceSchoolId = null) {
 }
 
 async function dbDelete(table, ids, enforceSchoolId = null) {
-  const idList = Array.isArray(ids) ? ids : [ids];
+  const idList = (Array.isArray(ids) ? ids : [ids])
+    .map(v => (v === null || v === undefined ? '' : String(v).trim()))
+    .filter(Boolean);
+  if (!idList.length) return [];
   if (IS_PREVIEW) {
     MOCK_DB[table] = (MOCK_DB[table] || []).filter(x =>
-      !(idList.includes(x.id) && (!enforceSchoolId || x.sekolah_id === enforceSchoolId))
+      !(idList.includes(String(x.id)) && (!enforceSchoolId || String(x.sekolah_id) === String(enforceSchoolId)))
     );
-    return;
+    return idList;
   }
   for (const batchIds of chunkArray(idList, CHUNK_SIZE)) {
     let q = sb.from(table).delete().in('id', batchIds);
     if (enforceSchoolId) q = q.eq('sekolah_id', enforceSchoolId);
-    const { error } = await q;
+    const { data, error } = await q.select('id');
     if (error) throw error;
+    if (!data || data.length === 0) {
+      throw new Error(`Data pada tabel '${table}' tidak terhapus (cek ID atau izin RLS/policy database).`);
+    }
   }
+  return idList;
 }
 
 /* ============================================================================
@@ -2838,23 +2855,43 @@ async function addSiswa(e) {
       const sid = fd.get('sekolah_id') || STATE.activeSekolahId;
       if (!sid || sid === 'ALL') return notify("Pilih sekolah spesifik terlebih dahulu.", "error");
 
-      await dbInsert('siswa', {
-        sekolah_id: sid,
-        username: fd.get('username').trim(),
-        password: fd.get('password').trim(),
-        nama_lengkap: fd.get('nama_lengkap').trim(),
-        kelas: fd.get('kelas').trim(),
-        jenis_kelamin: fd.get('jenis_kelamin'),
-        tgl_lahir: fd.get('tgl_lahir')?.trim() || '',
-        foto_url: fd.get('foto_url')?.trim() || '',
-        ruang_id: fd.get('ruang_id') || null,
-        sesi_id: fd.get('sesi_id') || null
-      });
-      e.target.reset();
-      await loadRoleScopedData();
-      notify("Data siswa berhasil ditambahkan ke sekolah terpilih.", "success");
+      if (STATE.editSiswaId) {
+        const existing = STATE.siswaList.find(x => String(x.id) === String(STATE.editSiswaId)) || {};
+        const payload = {
+          sekolah_id: sid,
+          username: fd.get('username').trim(),
+          password: fd.get('password').trim(),
+          nama_lengkap: fd.get('nama_lengkap').trim(),
+          kelas: fd.get('kelas').trim(),
+          jenis_kelamin: fd.get('jenis_kelamin'),
+          tgl_lahir: fd.has('tgl_lahir') ? (fd.get('tgl_lahir')?.trim() || '') : (existing.tgl_lahir || ''),
+          foto_url: fd.has('foto_url') ? (fd.get('foto_url')?.trim() || '') : (existing.foto_url || ''),
+          ruang_id: fd.get('ruang_id') || null,
+          sesi_id: fd.has('sesi_id') ? (fd.get('sesi_id') || null) : (existing.sesi_id || null)
+        };
+        await dbUpdate('siswa', STATE.editSiswaId, payload);
+        STATE.editSiswaId = null;
+        await loadRoleScopedData();
+        notify(`Data siswa "${payload.nama_lengkap}" berhasil diperbarui.`, "success");
+      } else {
+        await dbInsert('siswa', {
+          sekolah_id: sid,
+          username: fd.get('username').trim(),
+          password: fd.get('password').trim(),
+          nama_lengkap: fd.get('nama_lengkap').trim(),
+          kelas: fd.get('kelas').trim(),
+          jenis_kelamin: fd.get('jenis_kelamin'),
+          tgl_lahir: fd.get('tgl_lahir')?.trim() || '',
+          foto_url: fd.get('foto_url')?.trim() || '',
+          ruang_id: fd.get('ruang_id') || null,
+          sesi_id: fd.get('sesi_id') || null
+        });
+        e.target.reset();
+        await loadRoleScopedData();
+        notify("Data siswa berhasil ditambahkan ke sekolah terpilih.", "success");
+      }
     } catch (err) {
-      notify("Gagal menambah siswa: " + err.message, "error");
+      notify("Gagal menyimpan data siswa: " + err.message, "error");
     }
   }, btn);
 }
@@ -2868,6 +2905,9 @@ function bulkDeleteSiswa() {
       await runWithBusyLock('bulk-delete-siswa', async () => {
         try {
           await dbDelete('siswa', STATE.selectedSiswaIds);
+          if (STATE.editSiswaId && STATE.selectedSiswaIds.some(id => String(id) === String(STATE.editSiswaId))) {
+            STATE.editSiswaId = null;
+          }
           STATE.selectedSiswaIds = [];
           await loadRoleScopedData();
           notify("Data siswa terpilih berhasil dihapus.", "success");
@@ -2888,19 +2928,30 @@ async function addProktor(e) {
       const sid = fd.get('sekolah_id');
       if (!sid) return notify("Wajib memilih Sekolah / NPSN untuk Proktor!", "error");
 
-      await dbInsert('proktor', {
+      const payload = {
         sekolah_id: sid,
         username: fd.get('username').trim(),
         password: fd.get('password').trim(),
-        nama_proktor: fd.get('nama_proktor').trim(),
-        nip: fd.get('nip')?.trim() || '-',
-        ruang_id: fd.get('ruang_id') || null
-      });
-      e.target.reset();
-      await loadRoleScopedData();
-      notify("Akun Proktor berhasil ditambahkan & dikunci ke sekolah terpilih.", "success");
+        nama_proktor: fd.get('nama_proktor').trim()
+      };
+
+      if (STATE.editProktorId) {
+        await dbUpdate('proktor', STATE.editProktorId, payload);
+        STATE.editProktorId = null;
+        await loadRoleScopedData();
+        notify(`Data Proktor "${payload.nama_proktor}" berhasil diperbarui.`, "success");
+      } else {
+        await dbInsert('proktor', {
+          ...payload,
+          nip: fd.get('nip')?.trim() || '-',
+          ruang_id: fd.get('ruang_id') || null
+        });
+        e.target.reset();
+        await loadRoleScopedData();
+        notify("Akun Proktor berhasil ditambahkan & dikunci ke sekolah terpilih.", "success");
+      }
     } catch (err) {
-      notify("Gagal menambah Proktor: " + err.message, "error");
+      notify("Gagal menyimpan data Proktor: " + err.message, "error");
     }
   }, btn);
 }
@@ -2914,17 +2965,26 @@ async function addRuang(e) {
       const sid = fd.get('sekolah_id') || STATE.activeSekolahId;
       if (!sid || sid === 'ALL') return notify("Pilih sekolah spesifik terlebih dahulu.", "error");
 
-      await dbInsert('ruang_ujian', {
+      const payload = {
         sekolah_id: sid,
         kode_ruang: fd.get('kode_ruang').trim(),
         nama_ruang: fd.get('nama_ruang').trim(),
         kapasitas: Number(fd.get('kapasitas')) || 35
-      });
-      e.target.reset();
-      await loadRoleScopedData();
-      notify("Ruang ujian ditambahkan.", "success");
+      };
+
+      if (STATE.editRuangId) {
+        await dbUpdate('ruang_ujian', STATE.editRuangId, payload);
+        STATE.editRuangId = null;
+        await loadRoleScopedData();
+        notify(`Ruang "${payload.kode_ruang} - ${payload.nama_ruang}" berhasil diperbarui.`, "success");
+      } else {
+        await dbInsert('ruang_ujian', payload);
+        e.target.reset();
+        await loadRoleScopedData();
+        notify("Ruang ujian ditambahkan.", "success");
+      }
     } catch (err) {
-      notify("Gagal menambah ruang: " + err.message, "error");
+      notify("Gagal menyimpan ruang: " + err.message, "error");
     }
   }, btn);
 }
@@ -2938,25 +2998,111 @@ async function addSesi(e) {
       const sid = fd.get('sekolah_id') || STATE.activeSekolahId;
       if (!sid || sid === 'ALL') return notify("Pilih sekolah spesifik terlebih dahulu.", "error");
 
-      await dbInsert('sesi_ujian', {
+      const payload = {
         sekolah_id: sid,
         nama_sesi: fd.get('nama_sesi').trim(),
         waktu_mulai: fd.get('waktu_mulai'),
         waktu_selesai: fd.get('waktu_selesai')
-      });
-      e.target.reset();
-      await loadRoleScopedData();
-      notify("Sesi ujian ditambahkan.", "success");
+      };
+
+      if (STATE.editSesiId) {
+        await dbUpdate('sesi_ujian', STATE.editSesiId, payload);
+        STATE.editSesiId = null;
+        await loadRoleScopedData();
+        notify(`Sesi "${payload.nama_sesi}" berhasil diperbarui.`, "success");
+      } else {
+        await dbInsert('sesi_ujian', payload);
+        e.target.reset();
+        await loadRoleScopedData();
+        notify("Sesi ujian ditambahkan.", "success");
+      }
     } catch (err) {
-      notify("Gagal menambah sesi: " + err.message, "error");
+      notify("Gagal menyimpan sesi: " + err.message, "error");
     }
   }, btn);
 }
 
-async function addMapel(e) {
+function deleteRuang(rawId) {
+  const id = decodeURIComponent(String(rawId || ''));
+  if (!id) return notify("ID ruang tidak valid.", "error");
+  const target = STATE.ruang.find(r => String(r.id) === String(id));
+  const label = target ? `${target.kode_ruang} - ${target.nama_ruang}` : 'ruang ini';
+
+  askConfirm(
+    "Hapus Ruang Ujian",
+    `Hapus ${label}? Tautan ruang pada siswa, proktor, dan jadwal terkait akan dikosongkan otomatis.`,
+    async () => {
+      await runWithBusyLock(`del-ruang-${id}`, async () => {
+        try {
+          if (!IS_PREVIEW && sb) {
+            const [resSiswa, resProktor, resJadwal] = await Promise.all([
+              sb.from('siswa').update({ ruang_id: null }).eq('ruang_id', id),
+              sb.from('proktor').update({ ruang_id: null }).eq('ruang_id', id),
+              sb.from('jadwal_peserta').update({ ruang_id: null }).eq('ruang_id', id)
+            ]);
+            if (resSiswa.error) throw resSiswa.error;
+            if (resProktor.error) throw resProktor.error;
+            if (resJadwal.error) throw resJadwal.error;
+          } else {
+            (MOCK_DB.siswa || []).forEach(s => { if (String(s.ruang_id) === String(id)) s.ruang_id = null; });
+            (MOCK_DB.proktor || []).forEach(p => { if (String(p.ruang_id) === String(id)) p.ruang_id = null; });
+            (MOCK_DB.jadwal_peserta || []).forEach(j => { if (String(j.ruang_id) === String(id)) j.ruang_id = null; });
+          }
+
+          await dbDelete('ruang_ujian', id);
+          if (String(STATE.editRuangId) === String(id)) STATE.editRuangId = null;
+          STATE.ruang = STATE.ruang.filter(r => String(r.id) !== String(id));
+          await loadRoleScopedData();
+          notify(`Ruang ${label} berhasil dihapus.`, "success");
+        } catch (err) {
+          notify("Gagal menghapus ruang: " + err.message, "error");
+        }
+      });
+    }
+  );
+}
+
+function deleteSesi(rawId) {
+  const id = decodeURIComponent(String(rawId || ''));
+  if (!id) return notify("ID sesi tidak valid.", "error");
+  const target = STATE.sesi.find(s => String(s.id) === String(id));
+  const label = target ? target.nama_sesi : 'sesi ini';
+
+  askConfirm(
+    "Hapus Sesi Ujian",
+    `Hapus ${label}? Tautan sesi pada siswa dan jadwal terkait akan dikosongkan otomatis.`,
+    async () => {
+      await runWithBusyLock(`del-sesi-${id}`, async () => {
+        try {
+          if (!IS_PREVIEW && sb) {
+            const [resSiswa, resJadwal] = await Promise.all([
+              sb.from('siswa').update({ sesi_id: null }).eq('sesi_id', id),
+              sb.from('jadwal_peserta').update({ sesi_id: null }).eq('sesi_id', id)
+            ]);
+            if (resSiswa.error) throw resSiswa.error;
+            if (resJadwal.error) throw resJadwal.error;
+          } else {
+            (MOCK_DB.siswa || []).forEach(s => { if (String(s.sesi_id) === String(id)) s.sesi_id = null; });
+            (MOCK_DB.jadwal_peserta || []).forEach(j => { if (String(j.sesi_id) === String(id)) j.sesi_id = null; });
+          }
+
+          await dbDelete('sesi_ujian', id);
+          if (String(STATE.editSesiId) === String(id)) STATE.editSesiId = null;
+          STATE.sesi = STATE.sesi.filter(s => String(s.id) !== String(id));
+          await loadRoleScopedData();
+          notify(`Sesi ${label} berhasil dihapus.`, "success");
+        } catch (err) {
+          notify("Gagal menghapus sesi: " + err.message, "error");
+        }
+      });
+    }
+  );
+}
+
+async function saveMapel(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
-  await runWithBusyLock('add-mapel', async () => {
+  await runWithBusyLock('save-mapel', async () => {
     try {
       const fd = new FormData(e.target);
       const sid = fd.get('sekolah_id') || null;
@@ -2965,7 +3111,7 @@ async function addMapel(e) {
       if (!isoTanggal) {
         return notify("Format tanggal tidak valid. Gunakan format hari-bulan-tahun (contoh: 25-11-2026).", "error");
       }
-      await dbInsert('mapel', {
+      const payload = {
         sekolah_id: sid === 'ALL' ? null : sid,
         kode_mapel: fd.get('kode_mapel').trim().toUpperCase(),
         nama_mapel: fd.get('nama_mapel').trim(),
@@ -2977,14 +3123,42 @@ async function addMapel(e) {
         acak_soal: fd.get('acak_soal') === 'on',
         acak_opsi: fd.get('acak_opsi') === 'on',
         status: fd.get('status')
-      });
-      e.target.reset();
-      await loadRoleScopedData();
-      notify("Paket ujian berhasil dibuat.", "success");
+      };
+
+      if (STATE.editMapelId) {
+        await dbUpdate('mapel', STATE.editMapelId, payload);
+        touchMapelCacheVersion(STATE.editMapelId);
+        STATE.mapelModalOpen = false;
+        STATE.editMapelId = null;
+        await loadRoleScopedData();
+        notify(`Paket ujian "${payload.nama_mapel}" berhasil diperbarui.`, "success");
+      } else {
+        await dbInsert('mapel', payload);
+        STATE.mapelModalOpen = false;
+        STATE.editMapelId = null;
+        await loadRoleScopedData();
+        notify(`Paket ujian "${payload.nama_mapel}" berhasil dibuat.`, "success");
+      }
     } catch (err) {
-      notify("Gagal membuat paket ujian: " + err.message, "error");
+      notify("Gagal menyimpan paket ujian: " + err.message, "error");
     }
   }, btn);
+}
+
+async function toggleMapelRandom(id, field, currentVal) {
+  if (field !== 'acak_soal' && field !== 'acak_opsi') return;
+  await runWithBusyLock(`toggle-${field}-${id}`, async () => {
+    try {
+      const nextVal = !currentVal;
+      await dbUpdate('mapel', id, { [field]: nextVal });
+      touchMapelCacheVersion(id);
+      await loadRoleScopedData();
+      const label = field === 'acak_soal' ? 'Acak Nomor Soal' : 'Acak Opsi PG';
+      notify(`${label} diatur ke ${nextVal ? 'ON' : 'OFF'}.`, "success");
+    } catch (err) {
+      notify("Gagal mengubah pengaturan acak: " + err.message, "error");
+    }
+  });
 }
 
 async function toggleMapelStatus(id, currentStatus) {
@@ -4256,7 +4430,7 @@ function renderAdminPortal() {
     { id: 'siswa', short: 'Siswa', label: 'Data Siswa & Excel' },
     { id: 'proktor', short: 'Proktor', label: 'Data Guru / Proktor' },
     { id: 'ruang_sesi', short: 'Ruang', label: 'Ruang & Sesi' },
-    { id: 'mapel', short: 'Paket', label: 'Paket Ujian & WIB' },
+    { id: 'mapel', short: 'Ujian', label: 'Manajemen Ujian' },
     { id: 'bank_soal', short: 'Soal', label: 'Bank Soal (6 Tipe)' },
     { id: 'jadwal', short: 'Jadwal', label: 'Distribusi Peserta' },
     { id: 'hasil', short: 'Nilai', label: 'Koreksi, Rekap & Analisis' },
@@ -4523,6 +4697,11 @@ function renderAdminContent() {
   }
 
   if (t === 'siswa') {
+    const editingSiswa = STATE.editSiswaId
+      ? STATE.siswaList.find(s => String(s.id) === String(STATE.editSiswaId))
+      : null;
+    const selectedSchoolSiswa = editingSiswa ? editingSiswa.sekolah_id : STATE.activeSekolahId;
+
     return `
       <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -4538,26 +4717,36 @@ function renderAdminContent() {
           </div>
         </div>
 
-        <form onsubmit="CBT.addSiswa(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-          <select name="sekolah_id" required class="px-3 py-2 rounded-xl border text-xs bg-white font-bold">
-            ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===STATE.activeSekolahId?'selected':''}>${esc(sk.nama_sekolah)} (${esc(sk.npsn)})</option>`).join('')}
-          </select>
-          <input name="username" required placeholder="NISN / Username" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-          <input name="password" required placeholder="Password" value="123" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-          <input name="nama_lengkap" required placeholder="Nama Lengkap Siswa" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-          <input name="kelas" required placeholder="Kelas (mis: VI)" value="VI" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-          <select name="jenis_kelamin" class="px-3 py-2 rounded-xl border text-xs bg-white">
-            <option value="Laki-Laki">Laki-Laki</option>
-            <option value="Perempuan">Perempuan</option>
-          </select>
-          <select name="ruang_id" class="px-3 py-2 rounded-xl border text-xs bg-white">
-            <option value="">-- Pilih Ruang --</option>
-            ${STATE.ruang.map(r => {
-              const sk = getSekolahById(r.sekolah_id);
-              return `<option value="${r.id}">${esc(sk.nama_sekolah)} - ${esc(r.kode_ruang)}</option>`;
-            }).join('')}
-          </select>
-          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-700 text-white font-bold text-xs">+ Tambah Siswa</button>
+        <form id="form-siswa" onsubmit="CBT.addSiswa(event)" class="${editingSiswa ? 'bg-blue-50/70 border-blue-400 ring-2 ring-blue-100' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-2xl border space-y-2.5 transition">
+          ${editingSiswa ? `
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-extrabold text-blue-900">✏️ Mode Edit Siswa: ${esc(editingSiswa.nama_lengkap)} (${esc(editingSiswa.username)})</span>
+              <button type="button" onclick="CBT.cancelEditSiswa()" class="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold">Batal Edit</button>
+            </div>
+          ` : ''}
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+            <select name="sekolah_id" required class="px-3 py-2 rounded-xl border text-xs bg-white font-bold">
+              ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===selectedSchoolSiswa?'selected':''}>${esc(sk.nama_sekolah)} (${esc(sk.npsn)})</option>`).join('')}
+            </select>
+            <input name="username" required value="${esc(editingSiswa?.username || '')}" placeholder="NISN / Username" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+            <input name="password" required value="${esc(editingSiswa ? editingSiswa.password : '123')}" placeholder="Password" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+            <input name="nama_lengkap" required value="${esc(editingSiswa?.nama_lengkap || '')}" placeholder="Nama Lengkap Siswa" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+            <input name="kelas" required value="${esc(editingSiswa ? editingSiswa.kelas : 'VI')}" placeholder="Kelas (mis: VI)" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+            <select name="jenis_kelamin" class="px-3 py-2 rounded-xl border text-xs bg-white">
+              <option value="Laki-Laki" ${(!editingSiswa || editingSiswa.jenis_kelamin==='Laki-Laki')?'selected':''}>Laki-Laki</option>
+              <option value="Perempuan" ${(editingSiswa && editingSiswa.jenis_kelamin==='Perempuan')?'selected':''}>Perempuan</option>
+            </select>
+            <select name="ruang_id" class="px-3 py-2 rounded-xl border text-xs bg-white">
+              <option value="">-- Pilih Ruang --</option>
+              ${STATE.ruang.map(r => {
+                const sk = getSekolahById(r.sekolah_id);
+                return `<option value="${r.id}" ${editingSiswa && String(editingSiswa.ruang_id)===String(r.id)?'selected':''}>${esc(sk.nama_sekolah)} - ${esc(r.kode_ruang)}</option>`;
+              }).join('')}
+            </select>
+            <button type="submit" class="px-4 py-2 rounded-xl ${editingSiswa ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-700 hover:bg-blue-800'} text-white font-bold text-xs">
+              ${editingSiswa ? 'Simpan Perubahan' : '+ Tambah Siswa'}
+            </button>
+          </div>
         </form>
 
         <div class="overflow-x-auto">
@@ -4571,15 +4760,20 @@ function renderAdminContent() {
                 <th class="p-2.5">Nama Lengkap</th>
                 <th class="p-2.5">Kelas</th>
                 <th class="p-2.5">Ruang</th>
+                <th class="p-2.5">Aksi</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-100">
-              ${scopedSiswa.map(s => {
+              ${scopedSiswa.length === 0 ? `
+                <tr><td colspan="8" class="p-6 text-center text-slate-400">Belum ada data siswa terdaftar pada sekolah ini.</td></tr>
+              ` : scopedSiswa.map(s => {
                 const sek = getSekolahById(s.sekolah_id);
                 const r = STATE.ruang.find(x => x.id === s.ruang_id);
                 const checked = STATE.selectedSiswaIds.includes(s.id);
+                const safeId = encodeURIComponent(String(s.id ?? ''));
+                const isEditingRow = editingSiswa && String(editingSiswa.id) === String(s.id);
                 return `
-                  <tr>
+                  <tr class="${isEditingRow ? 'bg-blue-50/70' : ''}">
                     <td class="p-2.5"><input type="checkbox" ${checked?'checked':''} onchange="CBT.toggleSiswaSelect('${s.id}', this.checked)" /></td>
                     <td class="p-2.5"><span class="px-2 py-0.5 rounded bg-blue-50 text-blue-800 font-bold text-[10px]">${esc(sek.nama_sekolah)}</span></td>
                     <td class="p-2.5 font-mono font-bold">${esc(s.username)}</td>
@@ -4587,6 +4781,9 @@ function renderAdminContent() {
                     <td class="p-2.5 font-semibold">${esc(s.nama_lengkap)}</td>
                     <td class="p-2.5">${esc(s.kelas)}</td>
                     <td class="p-2.5">${esc(r?.kode_ruang || '-')}</td>
+                    <td class="p-2.5 whitespace-nowrap">
+                      <button type="button" onclick="CBT.startEditSiswa('${safeId}')" class="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold cursor-pointer">Edit</button>
+                    </td>
                   </tr>
                 `;
               }).join('')}
@@ -4598,6 +4795,11 @@ function renderAdminContent() {
   }
 
   if (t === 'proktor') {
+    const editingProktor = STATE.editProktorId
+      ? STATE.proktorList.find(p => String(p.id) === String(STATE.editProktorId))
+      : null;
+    const selectedSchoolProktor = editingProktor ? editingProktor.sekolah_id : STATE.activeSekolahId;
+
     return `
       <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -4614,23 +4816,44 @@ function renderAdminContent() {
             <button onclick="CBT.exportProktorExcel()" class="px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold">⬇ Export Excel</button>
           </div>
         </div>
-        <form onsubmit="CBT.addProktor(event)" class="grid grid-cols-1 sm:grid-cols-5 gap-2.5 bg-slate-50 p-3.5 rounded-2xl border">
-          <select name="sekolah_id" required class="px-3 py-2 rounded-xl border text-xs bg-white font-bold">
-            ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===STATE.activeSekolahId?'selected':''}>${esc(sk.nama_sekolah)} (${esc(sk.npsn)})</option>`).join('')}
-          </select>
-          <input name="username" required placeholder="Username Proktor" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-          <input name="password" required placeholder="Password" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-          <input name="nama_proktor" required placeholder="Nama Guru / Proktor" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-700 text-white font-bold text-xs">+ Tambah Proktor</button>
+        <form id="form-proktor" onsubmit="CBT.addProktor(event)" class="${editingProktor ? 'bg-blue-50/70 border-blue-400 ring-2 ring-blue-100' : 'bg-slate-50 border-slate-200'} p-3.5 rounded-2xl border space-y-2.5 transition">
+          ${editingProktor ? `
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-extrabold text-blue-900">✏️ Mode Edit Proktor: ${esc(editingProktor.nama_proktor)} (${esc(editingProktor.username)})</span>
+              <button type="button" onclick="CBT.cancelEditProktor()" class="px-2.5 py-1 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold">Batal Edit</button>
+            </div>
+          ` : ''}
+          <div class="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+            <select name="sekolah_id" required class="px-3 py-2 rounded-xl border text-xs bg-white font-bold">
+              ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===selectedSchoolProktor?'selected':''}>${esc(sk.nama_sekolah)} (${esc(sk.npsn)})</option>`).join('')}
+            </select>
+            <input name="username" required value="${esc(editingProktor?.username || '')}" placeholder="Username Proktor" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+            <input name="password" required value="${esc(editingProktor?.password || '')}" placeholder="Password" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+            <input name="nama_proktor" required value="${esc(editingProktor?.nama_proktor || '')}" placeholder="Nama Guru / Proktor" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+            <button type="submit" class="px-4 py-2 rounded-xl ${editingProktor ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-700 hover:bg-blue-800'} text-white font-bold text-xs">
+              ${editingProktor ? 'Simpan Perubahan' : '+ Tambah Proktor'}
+            </button>
+          </div>
         </form>
         <div class="overflow-x-auto">
           <table class="w-full text-left text-xs">
             <thead class="bg-slate-50 border-b"><tr><th class="p-3">Sekolah (NPSN)</th><th class="p-3">Username</th><th class="p-3">Nama Proktor</th><th class="p-3">Aksi</th></tr></thead>
             <tbody class="divide-y">
-              ${STATE.proktorList.map(p => {
+              ${STATE.proktorList.length === 0 ? `
+                <tr><td colspan="4" class="p-6 text-center text-slate-400">Belum ada data Guru / Proktor terdaftar.</td></tr>
+              ` : STATE.proktorList.map(p => {
                 const sek = getSekolahById(p.sekolah_id);
-                return `<tr><td class="p-3 font-bold text-blue-800">${esc(sek.nama_sekolah)} (${esc(sek.npsn)})</td><td class="p-3 font-mono font-bold">${esc(p.username)}</td><td class="p-3">${esc(p.nama_proktor)}</td>
-                <td class="p-3"><button onclick="CBT.deleteItem('proktor','${p.id}')" class="text-red-600 font-bold">Hapus</button></td></tr>`;
+                const safeId = encodeURIComponent(String(p.id ?? ''));
+                const isEditingRow = editingProktor && String(editingProktor.id) === String(p.id);
+                return `<tr class="${isEditingRow ? 'bg-blue-50/70' : ''}">
+                  <td class="p-3 font-bold text-blue-800">${esc(sek.nama_sekolah)} (${esc(sek.npsn)})</td>
+                  <td class="p-3 font-mono font-bold">${esc(p.username)}</td>
+                  <td class="p-3">${esc(p.nama_proktor)}</td>
+                  <td class="p-3 space-x-1 whitespace-nowrap">
+                    <button type="button" onclick="CBT.startEditProktor('${safeId}')" class="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold cursor-pointer">Edit</button>
+                    <button type="button" onclick="CBT.deleteProktor('${safeId}')" class="px-2.5 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold cursor-pointer">Hapus</button>
+                  </td>
+                </tr>`;
               }).join('')}
             </tbody>
           </table>
@@ -4640,6 +4863,17 @@ function renderAdminContent() {
   }
 
   if (t === 'ruang_sesi') {
+    const editingRuang = STATE.editRuangId
+      ? STATE.ruang.find(r => String(r.id) === String(STATE.editRuangId))
+      : null;
+    const editingSesi = STATE.editSesiId
+      ? STATE.sesi.find(s => String(s.id) === String(STATE.editSesiId))
+      : null;
+    const selectedSchoolRuang = editingRuang ? editingRuang.sekolah_id : STATE.activeSekolahId;
+    const selectedSchoolSesi = editingSesi ? editingSesi.sekolah_id : STATE.activeSekolahId;
+    const sesiMulaiVal = editingSesi ? String(editingSesi.waktu_mulai || '07:30').slice(0, 5) : '07:30';
+    const sesiSelesaiVal = editingSesi ? String(editingSesi.waktu_selesai || '09:30').slice(0, 5) : '09:30';
+
     return `
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-3">
@@ -4654,21 +4888,35 @@ function renderAdminContent() {
               <button type="button" onclick="CBT.exportRuangExcel()" class="px-2.5 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[11px] font-bold">⬇ Export</button>
             </div>
           </div>
-          <form onsubmit="CBT.addRuang(event)" class="grid grid-cols-1 gap-2">
+          <form id="form-ruang" onsubmit="CBT.addRuang(event)" class="grid grid-cols-1 gap-2 ${editingRuang ? 'p-3 rounded-xl bg-blue-50/70 border border-blue-300' : ''}">
+            ${editingRuang ? `
+              <div class="flex items-center justify-between text-[11px]">
+                <span class="font-extrabold text-blue-900">✏️ Edit Ruang: ${esc(editingRuang.kode_ruang)} - ${esc(editingRuang.nama_ruang)}</span>
+                <button type="button" onclick="CBT.cancelEditRuang()" class="px-2 py-0.5 rounded bg-white border border-slate-300 text-slate-700 font-bold">Batal</button>
+              </div>
+            ` : ''}
             <select name="sekolah_id" required class="px-3 py-2 rounded-xl border text-xs bg-white font-bold">
-              ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===STATE.activeSekolahId?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
+              ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===selectedSchoolRuang?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
             </select>
             <div class="flex gap-2">
-              <input name="kode_ruang" required placeholder="Kode (R-01)" class="px-3 py-2 rounded-xl border text-xs w-24 bg-white" />
-              <input name="nama_ruang" required placeholder="Nama Ruang" class="px-3 py-2 rounded-xl border text-xs flex-1 bg-white" />
-              <input name="kapasitas" type="number" value="35" title="Kapasitas Peserta" class="px-2 py-2 rounded-xl border text-xs w-20 text-center bg-white font-semibold" />
-              <button type="submit" class="px-3.5 py-2 rounded-xl bg-blue-700 text-white text-xs font-bold">+</button>
+              <input name="kode_ruang" required value="${esc(editingRuang?.kode_ruang || '')}" placeholder="Kode (R-01)" class="px-3 py-2 rounded-xl border text-xs w-24 bg-white" />
+              <input name="nama_ruang" required value="${esc(editingRuang?.nama_ruang || '')}" placeholder="Nama Ruang" class="px-3 py-2 rounded-xl border text-xs flex-1 bg-white" />
+              <input name="kapasitas" type="number" value="${editingRuang ? (editingRuang.kapasitas || 35) : 35}" title="Kapasitas Peserta" class="px-2 py-2 rounded-xl border text-xs w-20 text-center bg-white font-semibold" />
+              <button type="submit" class="px-3.5 py-2 rounded-xl ${editingRuang ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-700 hover:bg-blue-800'} text-white text-xs font-bold">${editingRuang ? 'Simpan' : '+'}</button>
             </div>
           </form>
           <div class="divide-y text-xs">
             ${STATE.ruang.length === 0 ? `<div class="py-4 text-center text-slate-400">Belum ada data ruang ujian.</div>` : STATE.ruang.map(r => {
               const sk = getSekolahById(r.sekolah_id);
-              return `<div class="py-2.5 flex justify-between items-center gap-2"><span><strong class="text-blue-800">[${esc(sk.nama_sekolah)}]</strong> <strong>${esc(r.kode_ruang)}</strong> - ${esc(r.nama_ruang)} <span class="text-slate-400">(Kap: ${r.kapasitas || 35})</span></span><button onclick="CBT.deleteItem('ruang_ujian','${r.id}')" class="text-red-600 font-bold shrink-0">Hapus</button></div>`;
+              const safeRuangId = encodeURIComponent(String(r.id ?? ''));
+              const isEditItem = editingRuang && String(editingRuang.id) === String(r.id);
+              return `<div class="py-2.5 px-1.5 rounded flex justify-between items-center gap-2 ${isEditItem ? 'bg-blue-50/80' : ''}">
+                <span><strong class="text-blue-800">[${esc(sk.nama_sekolah)}]</strong> <strong>${esc(r.kode_ruang)}</strong> - ${esc(r.nama_ruang)} <span class="text-slate-400">(Kap: ${r.kapasitas || 35})</span></span>
+                <div class="flex items-center gap-1 shrink-0">
+                  <button type="button" onclick="CBT.startEditRuang('${safeRuangId}')" class="px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold cursor-pointer">Edit</button>
+                  <button type="button" onclick="CBT.deleteRuang('${safeRuangId}')" class="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold cursor-pointer">Hapus</button>
+                </div>
+              </div>`;
             }).join('')}
           </div>
         </div>
@@ -4685,21 +4933,35 @@ function renderAdminContent() {
               <button type="button" onclick="CBT.exportSesiExcel()" class="px-2.5 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[11px] font-bold">⬇ Export</button>
             </div>
           </div>
-          <form onsubmit="CBT.addSesi(event)" class="grid grid-cols-1 gap-2">
+          <form id="form-sesi" onsubmit="CBT.addSesi(event)" class="grid grid-cols-1 gap-2 ${editingSesi ? 'p-3 rounded-xl bg-blue-50/70 border border-blue-300' : ''}">
+            ${editingSesi ? `
+              <div class="flex items-center justify-between text-[11px]">
+                <span class="font-extrabold text-blue-900">✏️ Edit Sesi: ${esc(editingSesi.nama_sesi)}</span>
+                <button type="button" onclick="CBT.cancelEditSesi()" class="px-2 py-0.5 rounded bg-white border border-slate-300 text-slate-700 font-bold">Batal</button>
+              </div>
+            ` : ''}
             <select name="sekolah_id" required class="px-3 py-2 rounded-xl border text-xs bg-white font-bold">
-              ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===STATE.activeSekolahId?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
+              ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${sk.id===selectedSchoolSesi?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
             </select>
             <div class="flex flex-wrap gap-2">
-              <input name="nama_sesi" required placeholder="Nama Sesi" class="px-3 py-2 rounded-xl border text-xs flex-1 bg-white" />
-              <input name="waktu_mulai" type="time" value="07:30" class="px-2 py-2 rounded-xl border text-xs bg-white" />
-              <input name="waktu_selesai" type="time" value="09:30" class="px-2 py-2 rounded-xl border text-xs bg-white" />
-              <button type="submit" class="px-3.5 py-2 rounded-xl bg-blue-700 text-white text-xs font-bold">+</button>
+              <input name="nama_sesi" required value="${esc(editingSesi?.nama_sesi || '')}" placeholder="Nama Sesi" class="px-3 py-2 rounded-xl border text-xs flex-1 bg-white" />
+              <input name="waktu_mulai" type="time" value="${esc(sesiMulaiVal)}" class="px-2 py-2 rounded-xl border text-xs bg-white" />
+              <input name="waktu_selesai" type="time" value="${esc(sesiSelesaiVal)}" class="px-2 py-2 rounded-xl border text-xs bg-white" />
+              <button type="submit" class="px-3.5 py-2 rounded-xl ${editingSesi ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-700 hover:bg-blue-800'} text-white text-xs font-bold">${editingSesi ? 'Simpan' : '+'}</button>
             </div>
           </form>
           <div class="divide-y text-xs">
             ${STATE.sesi.length === 0 ? `<div class="py-4 text-center text-slate-400">Belum ada data sesi ujian.</div>` : STATE.sesi.map(s => {
               const sk = getSekolahById(s.sekolah_id);
-              return `<div class="py-2.5 flex justify-between items-center gap-2"><span><strong class="text-blue-800">[${esc(sk.nama_sekolah)}]</strong> <strong>${esc(s.nama_sesi)}</strong> (${s.waktu_mulai}-${s.waktu_selesai})</span><button onclick="CBT.deleteItem('sesi_ujian','${s.id}')" class="text-red-600 font-bold shrink-0">Hapus</button></div>`;
+              const safeSesiId = encodeURIComponent(String(s.id ?? ''));
+              const isEditItem = editingSesi && String(editingSesi.id) === String(s.id);
+              return `<div class="py-2.5 px-1.5 rounded flex justify-between items-center gap-2 ${isEditItem ? 'bg-blue-50/80' : ''}">
+                <span><strong class="text-blue-800">[${esc(sk.nama_sekolah)}]</strong> <strong>${esc(s.nama_sesi)}</strong> (${s.waktu_mulai}-${s.waktu_selesai})</span>
+                <div class="flex items-center gap-1 shrink-0">
+                  <button type="button" onclick="CBT.startEditSesi('${safeSesiId}')" class="px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold cursor-pointer">Edit</button>
+                  <button type="button" onclick="CBT.deleteSesi('${safeSesiId}')" class="px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 font-bold cursor-pointer">Hapus</button>
+                </div>
+              </div>`;
             }).join('')}
           </div>
         </div>
@@ -4708,60 +4970,127 @@ function renderAdminContent() {
   }
 
   if (t === 'mapel') {
-    const defaultTglDMY = formatTanggalDMY(STATE.sekolah?.tanggal_ujian || '2026-11-25');
+    const activeSek = getSekolahById(STATE.activeSekolahId);
     return `
-      <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-4">
-        <h2 class="text-base font-extrabold text-slate-900">Manajemen Paket Ujian & Jadwal (WIB)</h2>
-        <form onsubmit="CBT.addMapel(event)" class="grid grid-cols-1 sm:grid-cols-4 gap-2.5 bg-slate-50 p-4 rounded-2xl border text-xs">
-          <select name="sekolah_id" class="px-3 py-2 rounded-xl border bg-white font-bold">
-            <option value="ALL">🌐 Lintas Semua Sekolah</option>
-            ${STATE.sekolahList.map(sk => `<option value="${sk.id}">${esc(sk.nama_sekolah)}</option>`).join('')}
-          </select>
-          <input name="kode_mapel" required placeholder="Kode (MTK-VI)" class="px-3 py-2 rounded-xl border bg-white" />
-          <input name="nama_mapel" required placeholder="Nama Mata Pelajaran / Paket" class="px-3 py-2 rounded-xl border bg-white sm:col-span-2" />
-          <input name="kelas_target" required placeholder="Kelas (VI)" value="VI" class="px-3 py-2 rounded-xl border bg-white" />
-          <input name="durasi_menit" type="number" required value="60" placeholder="Durasi (Menit)" class="px-3 py-2 rounded-xl border bg-white" />
-          <input name="tanggal_mulai" type="text" required value="${esc(defaultTglDMY)}" placeholder="DD-MM-YYYY (25-11-2026)" pattern="\\d{1,2}-\\d{1,2}-\\d{4}" title="Format: hari-bulan-tahun (contoh: 25-11-2026)" class="px-3 py-2 rounded-xl border bg-white font-semibold" />
-          <div class="flex gap-1">
-            <input name="jam_mulai" type="time" value="07:00" class="px-2 py-2 rounded-xl border bg-white w-1/2" />
-            <input name="jam_selesai" type="time" value="15:00" class="px-2 py-2 rounded-xl border bg-white w-1/2" />
+      <div class="space-y-4">
+        <div class="glass-panel rounded-2xl p-5 shadow-sm flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-base sm:text-lg font-extrabold text-slate-900">Manajemen Paket Ujian</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Buat, jadwalkan (WIB), atur acak soal/opsi PG, dan aktifkan paket ujian untuk peserta.</p>
           </div>
-          <label class="flex items-center gap-2"><input type="checkbox" name="acak_soal" checked /> Acak Nomor Soal</label>
-          <label class="flex items-center gap-2"><input type="checkbox" name="acak_opsi" checked /> Acak Opsi PG</label>
-          <select name="status" class="px-3 py-2 rounded-xl border bg-white"><option value="Aktif">Aktif</option><option value="Draft">Draft</option></select>
-          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-700 text-white font-bold">+ Buat Paket Ujian</button>
-        </form>
-
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-slate-50 border-b"><tr><th class="p-3">Cakupan</th><th class="p-3">Kode</th><th class="p-3">Nama Paket Ujian</th><th class="p-3">Durasi & Jadwal WIB</th><th class="p-3">Status</th><th class="p-3">Aksi</th></tr></thead>
-            <tbody class="divide-y">
-              ${STATE.mapelList.map(m => {
-                const sk = m.sekolah_id ? getSekolahById(m.sekolah_id) : null;
-                return `
-                  <tr>
-                    <td class="p-3 font-bold text-[10px]">${sk ? esc(sk.nama_sekolah) : '🌐 Semua Sekolah'}</td>
-                    <td class="p-3 font-bold">${esc(m.kode_mapel)}</td>
-                    <td class="p-3 font-semibold">${esc(m.nama_mapel)} (Kls ${esc(m.kelas_target)})</td>
-                    <td class="p-3">${m.durasi_menit} mnt • <strong>${esc(formatTanggalDMY(m.tanggal_mulai))}</strong> (${esc(String(m.jam_mulai || '07:00').slice(0,5))}-${esc(String(m.jam_selesai || '15:00').slice(0,5))} WIB)</td>
-                    <td class="p-3">
-                      <button onclick="CBT.toggleMapel('${m.id}', '${m.status}')" class="px-2.5 py-1 rounded-full font-bold ${m.status==='Aktif'?'bg-emerald-100 text-emerald-800':'bg-slate-200 text-slate-700'}">${m.status}</button>
-                    </td>
-                    <td class="p-3 space-x-2 whitespace-nowrap">
-                      <button onclick="CBT.openBankSoal('${m.id}')" class="text-blue-700 font-bold">Kelola Soal</button>
-                      <button onclick="CBT.deleteItem('mapel','${m.id}')" class="text-red-600 font-bold">Hapus</button>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
+          <button type="button" onclick="CBT.openMapelModal()"
+            class="px-4 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-extrabold shadow-sm flex items-center gap-1.5 transition">
+            <span>+ Buat Ujian Baru</span>
+          </button>
         </div>
+
+        ${STATE.mapelList.length === 0 ? `
+          <div class="glass-panel rounded-2xl p-10 text-center space-y-2">
+            <p class="text-sm font-bold text-slate-700">Belum ada paket ujian terdaftar.</p>
+            <p class="text-xs text-slate-500">Klik tombol <strong>+ Buat Ujian Baru</strong> di atas untuk membuat jadwal ujian pertama.</p>
+          </div>
+        ` : `
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            ${STATE.mapelList.map(m => {
+              const sk = m.sekolah_id ? getSekolahById(m.sekolah_id) : null;
+              const isAktif = m.status === 'Aktif';
+              const safeId = encodeURIComponent(String(m.id ?? ''));
+              const tokenLabel = sk ? sk.token_aktif : (activeSek?.token_aktif || 'SAS2026');
+              const jamMulai = String(m.jam_mulai || '07:00').slice(0, 5);
+              const jamSelesai = String(m.jam_selesai || '15:00').slice(0, 5);
+              const tglDMY = formatTanggalDMY(m.tanggal_mulai);
+              return `
+                <div class="glass-panel rounded-2xl p-5 shadow-sm flex flex-col justify-between gap-3 border ${isAktif ? 'border-emerald-200' : 'border-slate-200'}">
+                  <div class="space-y-2.5">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${isAktif ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}">
+                          ${isAktif ? '● Aktif' : '○ Ditutup (Draft)'}
+                        </span>
+                        <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
+                          ${sk ? esc(sk.nama_sekolah) : '🌐 Lintas Semua Sekolah'}
+                        </span>
+                      </div>
+                      <span class="px-2.5 py-0.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 font-mono text-[11px] font-extrabold">
+                        TOKEN: ${esc(tokenLabel)}
+                      </span>
+                    </div>
+
+                    <div>
+                      <h3 class="text-base font-extrabold text-slate-900 leading-snug">${esc(m.nama_mapel)}</h3>
+                      <div class="text-xs text-slate-600 mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                        <span>Kode: <strong class="text-slate-800">${esc(m.kode_mapel)}</strong></span>
+                        <span>|</span>
+                        <span>Kelas: <strong class="text-slate-800">${esc(m.kelas_target)}</strong></span>
+                        <span>|</span>
+                        <span>Durasi: <strong class="text-slate-800">${m.durasi_menit} Menit</strong></span>
+                      </div>
+                      <div class="text-xs font-semibold text-blue-700 mt-1.5">
+                        📅 Jadwal: ${esc(tglDMY)} (${esc(jamMulai)} s.d ${esc(jamSelesai)} WIB)
+                      </div>
+                    </div>
+
+                    ${!isAktif ? `
+                      <div class="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
+                        Sesi belum aktif (ujian ditutup). Klik <strong>Aktifkan Ujian</strong> agar paket ini bisa dikerjakan siswa.
+                      </div>
+                    ` : ''}
+                  </div>
+
+                  <div class="pt-3 border-t border-slate-200/80 space-y-2.5">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <button type="button" onclick="CBT.toggleMapel('${m.id}', '${m.status}')"
+                        class="px-3 py-1.5 rounded-xl text-xs font-extrabold transition ${isAktif
+                          ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'}">
+                        ${isAktif ? '⏸ Tutup Ujian' : '▶ Aktifkan Ujian'}
+                      </button>
+
+                      <button type="button" onclick="CBT.toggleMapelRandom('${m.id}', 'acak_soal', ${Boolean(m.acak_soal)})"
+                        class="px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition ${m.acak_soal
+                          ? 'bg-blue-50 border-blue-300 text-blue-800 hover:bg-blue-100'
+                          : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}">
+                        🔀 Acak Soal: ${m.acak_soal ? 'ON' : 'OFF'}
+                      </button>
+
+                      <button type="button" onclick="CBT.toggleMapelRandom('${m.id}', 'acak_opsi', ${Boolean(m.acak_opsi)})"
+                        class="px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition ${m.acak_opsi
+                          ? 'bg-indigo-50 border-indigo-300 text-indigo-800 hover:bg-indigo-100'
+                          : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}">
+                        🔀 Acak Opsi PG: ${m.acak_opsi ? 'ON' : 'OFF'}
+                      </button>
+                    </div>
+
+                    <div class="flex items-center justify-between gap-2 pt-1">
+                      <button type="button" onclick="CBT.openBankSoal('${m.id}')"
+                        class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 hover:text-blue-800 text-slate-700 text-xs font-bold transition">
+                        📝 Kelola Bank Soal →
+                      </button>
+                      <div class="flex items-center gap-1.5">
+                        <button type="button" onclick="CBT.openMapelModal('${safeId}')"
+                          class="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition">
+                          ✏️ Edit
+                        </button>
+                        <button type="button" onclick="CBT.deleteItem('mapel','${safeId}')"
+                          class="px-3 py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold transition">
+                          🗑 Hapus
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `}
       </div>
     `;
   }
 
   if (t === 'bank_soal') {
+    if ((!STATE.selectedMapelId || STATE.selectedMapelId === 'Semua') && STATE.mapelList.length > 0) {
+      STATE.selectedMapelId = STATE.mapelList[0].id;
+    }
     const nextNewNomor = STATE.soalList.reduce((max, q) => Math.max(max, Number(q.nomor_urut) || 0), 0) + 1;
     if (!STATE.editSoalId && STATE.newSoalNomor === null && STATE.soalList.length > 0) {
       STATE.editSoalId = STATE.soalList[0].id;
@@ -4779,15 +5108,34 @@ function renderAdminContent() {
     const activeStimObj = (currentFormStimId && currentFormStimId !== '__NEW__')
       ? STATE.stimulusList.find(st => st.id === currentFormStimId)
       : null;
+    const hasSelectedMapel = Boolean(STATE.selectedMapelId && STATE.mapelList.some(m => String(m.id) === String(STATE.selectedMapelId)));
+    const safeSelectedMapelId = encodeURIComponent(String(STATE.selectedMapelId || ''));
 
     return `
       <div class="glass-panel rounded-2xl p-5 shadow-sm space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <label class="text-xs font-extrabold">Paket Ujian:</label>
-            <select onchange="CBT.selectMapelBankSoal(this.value)" class="px-3 py-2 rounded-lg border text-xs font-bold bg-white">
-              ${STATE.mapelList.map(m => `<option value="${m.id}" ${m.id===STATE.selectedMapelId?'selected':''}>${esc(m.kode_mapel)} - ${esc(m.nama_mapel)}</option>`).join('')}
+            <select onchange="CBT.selectMapelBankSoal(this.value)" class="px-3 py-2 rounded-lg border text-xs font-bold bg-white max-w-full">
+              ${STATE.mapelList.length === 0
+                ? `<option value="">-- Belum Ada Paket Ujian --</option>`
+                : STATE.mapelList.map(m => `<option value="${m.id}" ${m.id===STATE.selectedMapelId?'selected':''}>${esc(m.kode_mapel)} - ${esc(m.nama_mapel)}</option>`).join('')}
             </select>
+            ${hasSelectedMapel ? `
+              <button type="button" onclick="CBT.clearSoalPaket('${safeSelectedMapelId}')"
+                ${STATE.soalList.length === 0 && STATE.stimulusList.length === 0 ? 'disabled' : ''}
+                title="Hapus seluruh butir soal &amp; stimulus yang sudah diinput pada paket ujian ini"
+                class="px-2.5 py-2 rounded-lg border text-xs font-bold transition ${STATE.soalList.length === 0 && STATE.stimulusList.length === 0
+                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 cursor-pointer'}">
+                🗑 Kosongkan Soal (${STATE.soalList.length})
+              </button>
+              <button type="button" onclick="CBT.deletePaketSoal('${safeSelectedMapelId}')"
+                title="Hapus paket ujian ini beserta seluruh soal di dalamnya"
+                class="px-2.5 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 border border-red-300 text-xs font-bold cursor-pointer transition">
+                ✕ Hapus Paket
+              </button>
+            ` : ''}
           </div>
           <div class="flex flex-wrap gap-2">
             <button onclick="CBT.downloadTemplateSoal()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold">⬇ Template 6 Tipe</button>
@@ -5426,6 +5774,10 @@ CREATE TABLE IF NOT EXISTS public.pengaturan_sekolah (
 );
 ALTER TABLE public.pengaturan_sekolah ADD COLUMN IF NOT EXISTS app_badge TEXT DEFAULT 'PUSDATIN • ANBK';
 ALTER TABLE public.pengaturan_sekolah ADD COLUMN IF NOT EXISTS app_subtitle TEXT DEFAULT 'Sistem Asesmen Berbasis Komputer';
+
+-- 2. RUANG UJIAN (Terisolasi per sekolah_id)
+CREATE TABLE IF NOT EXISTS public.ruang_ujian (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sekolah_id UUID REFERENCES public.pengaturan_sekolah(id) ON DELETE CASCADE,
     kode_ruang TEXT NOT NULL,
     nama_ruang TEXT NOT NULL,
@@ -5669,9 +6021,125 @@ function renderInfoModal() {
   `;
 }
 
-/* ============================================================================
-   MAIN RENDER LOOP & GLOBAL ACTION BINDING
-   ============================================================================ */
+function renderMapelModal() {
+  if (!STATE.mapelModalOpen) return '';
+  const editing = STATE.editMapelId
+    ? STATE.mapelList.find(m => String(m.id) === String(STATE.editMapelId))
+    : null;
+  const defaultTglDMY = formatTanggalDMY(editing?.tanggal_mulai || STATE.sekolah?.tanggal_ujian || '2026-11-25');
+  const jamMulaiVal = String(editing?.jam_mulai || '07:00').slice(0, 5);
+  const jamSelesaiVal = String(editing?.jam_selesai || '15:00').slice(0, 5);
+  const selectedSchoolVal = editing ? (editing.sekolah_id || 'ALL') : 'ALL';
+  const acakSoalChecked = editing ? Boolean(editing.acak_soal) : true;
+  const acakOpsiChecked = editing ? Boolean(editing.acak_opsi) : true;
+
+  return `
+    <div class="no-print fixed inset-0 bg-slate-900/60 z-[999998] flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+      onclick="if(event.target===this) CBT.closeMapelModal()">
+      <div class="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden my-auto">
+        <div class="pusdatin-header px-5 py-4 flex items-center justify-between text-white">
+          <div class="flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center text-xs font-extrabold">${editing ? '✎' : '+'}</span>
+            <h3 class="text-sm sm:text-base font-extrabold">${editing ? 'Edit Paket Ujian' : 'Buat Paket Ujian Baru'}</h3>
+          </div>
+          <button type="button" onclick="CBT.closeMapelModal()" class="text-white/90 hover:text-white font-extrabold text-lg leading-none px-1">✕</button>
+        </div>
+
+        <form onsubmit="CBT.saveMapel(event)" class="p-5 space-y-3.5 text-xs max-h-[82vh] overflow-y-auto">
+          <div>
+            <label class="block font-bold text-slate-700 mb-1">Nama Paket Ujian / Mata Pelajaran *</label>
+            <input name="nama_mapel" required value="${esc(editing?.nama_mapel || '')}" placeholder="Contoh: Bahasa Indonesia Kelas 6"
+              class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white focus:ring-2 focus:ring-blue-600 outline-none font-semibold" />
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Kode Paket Ujian *</label>
+              <input name="kode_mapel" required value="${esc(editing?.kode_mapel || '')}" placeholder="Contoh: BINDO-VI"
+                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white uppercase font-mono font-bold" />
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Cakupan Sekolah</label>
+              <select name="sekolah_id" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                <option value="ALL" ${selectedSchoolVal==='ALL'?'selected':''}>🌐 Lintas Semua Sekolah</option>
+                ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${selectedSchoolVal===sk.id?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Kelas Peserta *</label>
+              <input name="kelas_target" required value="${esc(editing?.kelas_target || 'VI')}" placeholder="VI / Semua"
+                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-semibold" />
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Durasi (Menit) *</label>
+              <input name="durasi_menit" type="number" min="5" required value="${editing ? editing.durasi_menit : 60}"
+                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-bold" />
+            </div>
+            <div class="col-span-2 sm:col-span-1">
+              <label class="block font-bold text-slate-700 mb-1">Status Ujian</label>
+              <select name="status" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                <option value="Aktif" ${(!editing || editing.status==='Aktif')?'selected':''}>Aktif</option>
+                <option value="Draft" ${(editing && editing.status==='Draft')?'selected':''}>Draft (Ditutup)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Tanggal (DD-MM-YYYY) *</label>
+              <input name="tanggal_mulai" type="text" required value="${esc(defaultTglDMY)}" placeholder="25-11-2026"
+                pattern="\\d{1,2}-\\d{1,2}-\\d{4}" title="Format: hari-bulan-tahun (contoh: 25-11-2026)"
+                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-semibold" />
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Jam Mulai (WIB) *</label>
+              <input name="jam_mulai" type="time" required value="${esc(jamMulaiVal)}"
+                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-semibold" />
+            </div>
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Jam Selesai (WIB) *</label>
+              <input name="jam_selesai" type="time" required value="${esc(jamSelesaiVal)}"
+                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-semibold" />
+            </div>
+          </div>
+
+          <div class="space-y-2 pt-1">
+            <label class="flex items-start gap-3 p-3 rounded-2xl bg-blue-50/70 border border-blue-200 cursor-pointer">
+              <input type="checkbox" name="acak_soal" ${acakSoalChecked ? 'checked' : ''} class="mt-0.5 w-4 h-4 accent-blue-700 shrink-0" />
+              <div>
+                <div class="font-extrabold text-blue-950">🔀 Acak Urutan Nomor Soal untuk Setiap Siswa</div>
+                <div class="text-[11px] text-blue-700">Jika aktif, urutan nomor soal setiap siswa akan berbeda secara otomatis.</div>
+              </div>
+            </label>
+
+            <label class="flex items-start gap-3 p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200 cursor-pointer">
+              <input type="checkbox" name="acak_opsi" ${acakOpsiChecked ? 'checked' : ''} class="mt-0.5 w-4 h-4 accent-indigo-700 shrink-0" />
+              <div>
+                <div class="font-extrabold text-indigo-950">🔀 Acak Urutan Opsi Jawaban PG / PGK</div>
+                <div class="text-[11px] text-indigo-700">Jika aktif, posisi pilihan jawaban A, B, C, D akan diacak untuk tiap peserta.</div>
+              </div>
+            </label>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+            <button type="button" onclick="CBT.closeMapelModal()"
+              class="px-4 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-bold">
+              Batal
+            </button>
+            <button type="submit"
+              class="px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-extrabold shadow">
+              ${editing ? 'Simpan Perubahan' : 'Simpan Ujian'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
 function initQuillPertanyaanEditor() {
   const container = document.getElementById('quill-pertanyaan-editor');
   const toolbar = document.getElementById('quill-toolbar-pertanyaan');
@@ -5715,6 +6183,7 @@ function render() {
   else if (STATE.role === 'proktor') html = renderProktorPortal();
   else if (STATE.role === 'admin') html = renderAdminPortal();
 
+  html += renderMapelModal();
   html += renderConfirmModal();
   html += renderInfoModal();
 
@@ -5750,7 +6219,25 @@ window.CBT = {
   unlockLogin: proktorResetLogin,
   bulkResetLogin: proktorBulkResetLockedLogins,
   resetSesi: proktorResetSesi,
-  setAdminTab: (tab) => { STATE.adminTab = tab; STATE.mobileMoreMenuOpen = false; render(); },
+  setAdminTab: async (tab) => {
+    STATE.adminTab = tab;
+    STATE.mobileMoreMenuOpen = false;
+    if (tab !== 'siswa') STATE.editSiswaId = null;
+    if (tab !== 'proktor') STATE.editProktorId = null;
+    if (tab !== 'ruang_sesi') {
+      STATE.editRuangId = null;
+      STATE.editSesiId = null;
+    }
+    if (tab === 'bank_soal' && (!STATE.selectedMapelId || STATE.selectedMapelId === 'Semua') && STATE.mapelList.length > 0) {
+      STATE.selectedMapelId = STATE.mapelList[0].id;
+      STATE.editSoalId = null;
+      STATE.newSoalNomor = null;
+      STATE.formStimulusId = undefined;
+      await loadBankSoalByMapel(STATE.selectedMapelId);
+      STATE.editSoalId = STATE.soalList[0]?.id || null;
+    }
+    render();
+  },
   toggleMoreMenu: (val) => { STATE.mobileMoreMenuOpen = (val !== undefined) ? val : !STATE.mobileMoreMenuOpen; render(); },
   setActiveSekolah: (id) => { STATE.activeSekolahId = id; STATE.sekolah = getSekolahById(id); render(); },
   updateToken: updateTokenSekolah,
@@ -5769,6 +6256,15 @@ window.CBT = {
   handleImportSekolahExcel,
   exportSekolahExcel,
   addSiswa,
+  startEditSiswa: (encodedId) => {
+    STATE.editSiswaId = decodeURIComponent(String(encodedId || ''));
+    render();
+    document.getElementById('form-siswa')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
+  cancelEditSiswa: () => {
+    STATE.editSiswaId = null;
+    render();
+  },
   bulkDeleteSiswa,
   downloadTemplateSiswa,
   handleImportSiswaExcel,
@@ -5780,19 +6276,85 @@ window.CBT = {
     render();
   },
   addProktor,
+  startEditProktor: (encodedId) => {
+    STATE.editProktorId = decodeURIComponent(String(encodedId || ''));
+    render();
+    document.getElementById('form-proktor')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
+  cancelEditProktor: () => {
+    STATE.editProktorId = null;
+    render();
+  },
+  deleteProktor: (encodedId) => {
+    const rawId = decodeURIComponent(String(encodedId || ''));
+    const target = STATE.proktorList.find(x => String(x.id) === rawId);
+    if (!target) {
+      return notify("Data Guru / Proktor tidak ditemukan atau sudah dihapus.", "error");
+    }
+    const label = `${target.nama_proktor} (${target.username})`;
+    askConfirm(
+      "Hapus Data Guru / Proktor",
+      `Apakah Anda yakin ingin menghapus akun proktor ${label}?`,
+      async () => {
+        await runWithBusyLock(`delete-proktor-${target.id}`, async () => {
+          try {
+            await dbDelete('proktor', target.id);
+            if (String(STATE.editProktorId) === String(target.id)) STATE.editProktorId = null;
+            STATE.proktorList = STATE.proktorList.filter(x => String(x.id) !== String(target.id));
+            await loadRoleScopedData();
+            notify(`Akun proktor ${label} berhasil dihapus.`, "success");
+          } catch (err) {
+            notify("Gagal menghapus proktor: " + err.message, "error");
+          }
+        });
+      }
+    );
+  },
   downloadTemplateProktor,
   handleImportProktorExcel,
   exportProktorExcel,
   addRuang,
+  startEditRuang: (encodedId) => {
+    STATE.editRuangId = decodeURIComponent(String(encodedId || ''));
+    render();
+    document.getElementById('form-ruang')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
+  cancelEditRuang: () => {
+    STATE.editRuangId = null;
+    render();
+  },
+  deleteRuang,
   downloadTemplateRuang,
   handleImportRuangExcel,
   exportRuangExcel,
   addSesi,
+  startEditSesi: (encodedId) => {
+    STATE.editSesiId = decodeURIComponent(String(encodedId || ''));
+    render();
+    document.getElementById('form-sesi')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  },
+  cancelEditSesi: () => {
+    STATE.editSesiId = null;
+    render();
+  },
+  deleteSesi,
   downloadTemplateSesi,
   handleImportSesiExcel,
   exportSesiExcel,
-  addMapel,
+  openMapelModal: (encodedId = null) => {
+    STATE.editMapelId = encodedId ? decodeURIComponent(String(encodedId)) : null;
+    STATE.mapelModalOpen = true;
+    render();
+  },
+  closeMapelModal: () => {
+    STATE.mapelModalOpen = false;
+    STATE.editMapelId = null;
+    render();
+  },
+  saveMapel,
+  addMapel: saveMapel,
   toggleMapel: toggleMapelStatus,
+  toggleMapelRandom,
   openBankSoal: async (mapelId) => {
     STATE.selectedMapelId = mapelId;
     STATE.editSoalId = null;
@@ -5810,6 +6372,86 @@ window.CBT = {
     await loadBankSoalByMapel(mapelId);
     STATE.editSoalId = STATE.soalList[0]?.id || null;
     render();
+  },
+  clearSoalPaket: (encodedMapelId) => {
+    const mapelId = decodeURIComponent(String(encodedMapelId || ''));
+    const targetMapel = STATE.mapelList.find(m => String(m.id) === mapelId);
+    if (!targetMapel) return notify("Paket ujian tidak ditemukan.", "error");
+    if (STATE.soalList.length === 0 && STATE.stimulusList.length === 0) {
+      return notify("Belum ada soal atau stimulus pada paket ujian ini.", "info");
+    }
+    const label = `${targetMapel.kode_mapel} - ${targetMapel.nama_mapel}`;
+    askConfirm(
+      "Kosongkan Semua Soal pada Paket Ujian",
+      `Hapus seluruh ${STATE.soalList.length} butir soal (dan ${STATE.stimulusList.length} stimulus) pada paket "${label}"? Nama paket ujian tetap tersimpan agar bisa diisi atau diimpor ulang.`,
+      async () => {
+        await runWithBusyLock(`clear-soal-${mapelId}`, async () => {
+          try {
+            if (IS_PREVIEW) {
+              MOCK_DB.soal = (MOCK_DB.soal || []).filter(q => String(q.mapel_id) !== mapelId);
+              MOCK_DB.stimulus = (MOCK_DB.stimulus || []).filter(s => String(s.mapel_id) !== mapelId);
+            } else if (sb) {
+              const { error: errSoal } = await sb.from('soal').delete().eq('mapel_id', mapelId);
+              if (errSoal) throw errSoal;
+              const { error: errStim } = await sb.from('stimulus').delete().eq('mapel_id', mapelId);
+              if (errStim) throw errStim;
+            }
+            touchMapelCacheVersion(mapelId);
+            STATE.soalList = [];
+            STATE.stimulusList = [];
+            STATE.editSoalId = null;
+            STATE.newSoalNomor = 1;
+            STATE.formStimulusId = undefined;
+            await loadBankSoalByMapel(mapelId);
+            render();
+            notify(`Seluruh soal pada paket "${label}" berhasil dihapus.`, "success");
+          } catch (err) {
+            notify("Gagal mengosongkan soal paket: " + err.message, "error");
+          }
+        });
+      },
+      "Ya, Hapus Semua Soal",
+      true
+    );
+  },
+  deletePaketSoal: (encodedMapelId) => {
+    const mapelId = decodeURIComponent(String(encodedMapelId || ''));
+    const targetMapel = STATE.mapelList.find(m => String(m.id) === mapelId);
+    if (!targetMapel) return notify("Paket ujian tidak ditemukan.", "error");
+    const label = `${targetMapel.kode_mapel} - ${targetMapel.nama_mapel}`;
+    askConfirm(
+      "Hapus Paket Soal Ujian",
+      `Apakah Anda yakin ingin menghapus paket ujian "${label}" beserta seluruh soal, stimulus, jadwal, dan hasil ujian terkait?`,
+      async () => {
+        await runWithBusyLock(`delete-paket-${mapelId}`, async () => {
+          try {
+            await dbDelete('mapel', mapelId);
+            if (IS_PREVIEW) {
+              MOCK_DB.soal = (MOCK_DB.soal || []).filter(q => String(q.mapel_id) !== mapelId);
+              MOCK_DB.stimulus = (MOCK_DB.stimulus || []).filter(s => String(s.mapel_id) !== mapelId);
+              MOCK_DB.jadwal_peserta = (MOCK_DB.jadwal_peserta || []).filter(j => String(j.mapel_id) !== mapelId);
+              MOCK_DB.hasil_ujian = (MOCK_DB.hasil_ujian || []).filter(h => String(h.mapel_id) !== mapelId);
+            }
+            localStorage.removeItem(`cbt_pkg_${mapelId}`);
+            STATE.mapelList = STATE.mapelList.filter(m => String(m.id) !== mapelId);
+            STATE.selectedMapelId = STATE.mapelList[0]?.id || '';
+            STATE.soalList = [];
+            STATE.stimulusList = [];
+            STATE.editSoalId = null;
+            STATE.newSoalNomor = null;
+            STATE.formStimulusId = undefined;
+            await loadRoleScopedData();
+            STATE.editSoalId = STATE.soalList[0]?.id || null;
+            render();
+            notify(`Paket soal ujian "${label}" berhasil dihapus.`, "success");
+          } catch (err) {
+            notify("Gagal menghapus paket soal ujian: " + err.message, "error");
+          }
+        });
+      },
+      "Ya, Hapus Paket",
+      true
+    );
   },
   selectMapelHasil: async (mapelId) => {
     STATE.selectedMapelId = mapelId;
@@ -5919,12 +6561,33 @@ window.CBT = {
   printRekapF4,
   copySql: copySqlSchema,
   deleteItem: (table, id) => {
+    const decodedId = decodeURIComponent(String(id || ''));
+    if (!decodedId) return notify("ID data tidak valid.", "error");
     askConfirm("Konfirmasi Hapus Data", "Apakah Anda yakin ingin menghapus item ini?", async () => {
-      await runWithBusyLock(`delete-${table}-${id}`, async () => {
+      await runWithBusyLock(`delete-${table}-${decodedId}`, async () => {
         try {
-          await dbDelete(table, id);
-          if (table === 'mapel' && STATE.selectedMapelId === id) {
-            STATE.selectedMapelId = '';
+          await dbDelete(table, decodedId);
+          if (table === 'proktor') {
+            STATE.proktorList = STATE.proktorList.filter(x => String(x.id) !== decodedId);
+          } else if (table === 'ruang_ujian') {
+            STATE.ruang = STATE.ruang.filter(x => String(x.id) !== decodedId);
+          } else if (table === 'sesi_ujian') {
+            STATE.sesi = STATE.sesi.filter(x => String(x.id) !== decodedId);
+          } else if (table === 'mapel') {
+            if (IS_PREVIEW) {
+              MOCK_DB.soal = (MOCK_DB.soal || []).filter(q => String(q.mapel_id) !== decodedId);
+              MOCK_DB.stimulus = (MOCK_DB.stimulus || []).filter(s => String(s.mapel_id) !== decodedId);
+              MOCK_DB.jadwal_peserta = (MOCK_DB.jadwal_peserta || []).filter(j => String(j.mapel_id) !== decodedId);
+              MOCK_DB.hasil_ujian = (MOCK_DB.hasil_ujian || []).filter(h => String(h.mapel_id) !== decodedId);
+            }
+            STATE.mapelList = STATE.mapelList.filter(x => String(x.id) !== decodedId);
+            localStorage.removeItem(`cbt_pkg_${decodedId}`);
+            if (STATE.selectedMapelId === decodedId) {
+              STATE.selectedMapelId = STATE.mapelList[0]?.id || '';
+              STATE.soalList = [];
+              STATE.stimulusList = [];
+              STATE.editSoalId = null;
+            }
           }
           await loadRoleScopedData();
           notify("Data berhasil dihapus.", "success");
@@ -5958,9 +6621,13 @@ window.CBT = {
     const fn = STATE.confirmModal?.onConfirm;
     if (!fn || isBusy('confirm-action')) return;
     await runWithBusyLock('confirm-action', async () => {
-      await fn();
-      STATE.confirmModal = null;
       render();
+      try {
+        await fn();
+      } finally {
+        STATE.confirmModal = null;
+        render();
+      }
     });
   },
   closeInfo: () => { STATE.infoModal = null; render(); }
