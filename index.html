@@ -704,6 +704,7 @@ const STATE = {
   timerInterval: null,
   showDaftarSoal: false,
   antiCheatModal: false,
+  antiCheatReason: '',
   violationCount: 0,
   lastResult: null,
 
@@ -1628,6 +1629,9 @@ function calculateExamResult(soalList, answersMap, existingDetails = {}) {
    ============================================================================ */
 async function handleLogin(e) {
   e.preventDefault();
+  if (STATE.loginTab === 'siswa') {
+    enterExamFullscreen();
+  }
   const submitBtn = e.target.querySelector('button[type="submit"]');
   await runWithBusyLock('login', async () => {
     const fd = new FormData(e.target);
@@ -1712,6 +1716,7 @@ async function handleLogin(e) {
         STATE.user = siswa;
         STATE.activeSekolahId = siswa.sekolah_id;
         STATE.siswaStep = 'konfirmasi';
+        attachAntiCheatListeners();
         setupTargetedRealtime();
         render();
       }
@@ -1734,10 +1739,12 @@ function quickPreviewLogin(role, proktorIndex = 0) {
     STATE.activeSekolahId = p.sekolah_id;
     loadRoleScopedData().then(() => setupTargetedRealtime());
   } else if (role === 'siswa') {
+    enterExamFullscreen();
     const s = MOCK_DB.siswa[0];
     STATE.role = 'siswa';
     STATE.user = s;
     STATE.activeSekolahId = s.sekolah_id;
+    attachAntiCheatListeners();
     loadInitialData().then(async () => {
       await loadStudentScopedData(s);
       STATE.siswaStep = 'konfirmasi';
@@ -1751,6 +1758,7 @@ async function handleLogout() {
   if (STATE.timerInterval) clearInterval(STATE.timerInterval);
   if (STATE.textSaveDebounceTimer) clearTimeout(STATE.textSaveDebounceTimer);
   teardownRealtime();
+  exitExamFullscreen();
   if (!IS_PREVIEW && STATE.role === 'admin' && sb) {
     await sb.auth.signOut();
   }
@@ -1774,6 +1782,7 @@ function shuffleArray(arr) {
 }
 
 async function startStudentExam(mapelId) {
+  enterExamFullscreen();
   await runWithBusyLock(`start-exam-${mapelId}`, async () => {
     const mapel = STATE.mapelList.find(m => m.id === mapelId);
     if (!mapel) return;
@@ -1991,36 +2000,181 @@ function startExamTimer(endTimeMs) {
   }, 1000);
 }
 
+/* ============================================================================
+   FITUR LAYAR PENUH (FULLSCREEN), ZOOM GAMBAR STIMULUS & PROTEKSI ESC/WINDOWS
+   ============================================================================ */
+async function enterExamFullscreen() {
+  try {
+    const el = document.documentElement;
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      if (el.requestFullscreen) await el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) await el.msRequestFullscreen();
+    }
+    if (navigator.keyboard && typeof navigator.keyboard.lock === 'function') {
+      await navigator.keyboard.lock(['Escape']).catch(() => {});
+    }
+  } catch (_) {
+    // Abaikan jika browser/perangkat membatasi Fullscreen API
+  }
+}
+
+function exitExamFullscreen() {
+  try {
+    if (navigator.keyboard && typeof navigator.keyboard.unlock === 'function') {
+      navigator.keyboard.unlock();
+    }
+    if (document.fullscreenElement && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else if (document.webkitFullscreenElement && document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  } catch (_) {}
+}
+
+function openStimulusZoom(src, caption = 'Gambar Stimulus') {
+  if (!src) return;
+  const existing = document.getElementById('cbt-stimulus-zoom-modal');
+  if (existing) existing.remove();
+
+  let scale = 1;
+  const modal = document.createElement('div');
+  modal.id = 'cbt-stimulus-zoom-modal';
+  modal.className = 'no-print fixed inset-0 z-[9999999] bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-3 sm:p-5 select-none';
+  modal.innerHTML = `
+    <div class="w-full max-w-5xl flex flex-wrap items-center justify-between gap-2 text-white mb-3">
+      <span class="text-xs sm:text-sm font-bold bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-700 truncate max-w-full">
+        🔍 ${esc(caption)}
+      </span>
+      <div class="flex items-center gap-1.5">
+        <button type="button" id="cbt-zoom-out" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">− Perkecil</button>
+        <button type="button" id="cbt-zoom-reset" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">100%</button>
+        <button type="button" id="cbt-zoom-in" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold border border-slate-600">+ Perbesar</button>
+        <button type="button" id="cbt-zoom-close" class="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-xs font-extrabold shadow">✕ Tutup</button>
+      </div>
+    </div>
+    <div id="cbt-zoom-stage" class="w-full max-w-5xl max-h-[82vh] overflow-auto flex items-center justify-center rounded-2xl bg-white/5 p-3">
+      <img id="cbt-zoom-img" src="${esc(src)}" alt="Perbesar Stimulus"
+        class="max-w-full max-h-[78vh] object-contain rounded-xl shadow-2xl bg-white p-1.5 transition-transform duration-150"
+        style="transform: scale(1); transform-origin: center center;" />
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const imgEl = modal.querySelector('#cbt-zoom-img');
+  const applyScale = () => { imgEl.style.transform = `scale(${scale})`; };
+  modal.querySelector('#cbt-zoom-in').onclick = (ev) => { ev.stopPropagation(); scale = Math.min(3, +(scale + 0.25).toFixed(2)); applyScale(); };
+  modal.querySelector('#cbt-zoom-out').onclick = (ev) => { ev.stopPropagation(); scale = Math.max(0.75, +(scale - 0.25).toFixed(2)); applyScale(); };
+  modal.querySelector('#cbt-zoom-reset').onclick = (ev) => { ev.stopPropagation(); scale = 1; applyScale(); };
+  modal.querySelector('#cbt-zoom-close').onclick = () => modal.remove();
+  modal.onclick = (ev) => {
+    if (ev.target === modal || ev.target.id === 'cbt-zoom-stage') modal.remove();
+  };
+}
+
+let lastSecurityTriggerAt = 0;
+async function triggerStudentSecurityViolation(reasonText, isFullscreenExit = false) {
+  if (STATE.role !== 'siswa') return;
+  const now = Date.now();
+  if (now - lastSecurityTriggerAt < 1200) return;
+  lastSecurityTriggerAt = now;
+
+  // Tutup modal zoom jika sedang terbuka agar peringatan langsung terlihat
+  const zoomModal = document.getElementById('cbt-stimulus-zoom-modal');
+  if (zoomModal) zoomModal.remove();
+
+  // Jika siswa masih di halaman konfirmasi (belum masuk soal), cukup beri peringatan tanpa mengunci akun
+  if (STATE.siswaStep !== 'ujian' || !STATE.activeExamMapel) {
+    if (!isFullscreenExit) {
+      showInfoModal(
+        "Peringatan Keamanan Layar Ujian",
+        `${reasonText} Tetap berada di mode Layar Penuh agar sesi ujian Anda tidak terganggu.`
+      );
+    } else {
+      notify("Mode layar penuh dinonaktifkan. Klik tombol Mulai Ujian untuk kembali ke layar penuh.", "info");
+    }
+    return;
+  }
+
+  STATE.violationCount += 1;
+  STATE.antiCheatReason = reasonText;
+  saveStudentDraftToLocal();
+  STATE.antiCheatModal = true;
+
+  if (STATE.violationCount >= 3) {
+    const jadwal = STATE.jadwalList.find(j => j.mapel_id === STATE.activeExamMapel.id);
+    if (jadwal) {
+      await dbUpdate('jadwal_peserta', jadwal.id, {
+        status_ujian: 'Terkunci',
+        pelanggaran: STATE.violationCount
+      }, STATE.user.sekolah_id);
+    }
+    clearInterval(STATE.timerInterval);
+    if (STATE.periodicAutoSaveInterval) clearInterval(STATE.periodicAutoSaveInterval);
+    const lockedSchool = getSekolahById(STATE.user.sekolah_id);
+    await handleLogout();
+    showInfoModal(
+      "AKUN UJIAN TERKUNCI (3x Pelanggaran)",
+      `Sistem mengunci sesi ujian Anda karena terdeteksi melanggar aturan keamanan layar sebanyak 3 kali (${reasonText}). Silakan hubungi Proktor ${lockedSchool.nama_sekolah} untuk membuka kunci (Reset Login).`
+    );
+    return;
+  }
+  render();
+}
+
 let antiCheatAttached = false;
 function attachAntiCheatListeners() {
   if (antiCheatAttached) return;
   antiCheatAttached = true;
 
-  document.addEventListener('visibilitychange', async () => {
+  // 1. Deteksi pindah tab / minimize browser
+  document.addEventListener('visibilitychange', () => {
     if (document.hidden && STATE.role === 'siswa' && STATE.siswaStep === 'ujian' && STATE.activeExamMapel) {
-      STATE.violationCount += 1;
-      saveStudentDraftToLocal();
-      STATE.antiCheatModal = true;
+      triggerStudentSecurityViolation('Anda terdeteksi berpindah tab atau meninggalkan layar ujian.');
+    }
+  });
 
-      if (STATE.violationCount >= 3) {
-        const jadwal = STATE.jadwalList.find(j => j.mapel_id === STATE.activeExamMapel.id);
-        if (jadwal) {
-          await dbUpdate('jadwal_peserta', jadwal.id, {
-            status_ujian: 'Terkunci',
-            pelanggaran: STATE.violationCount
-          }, STATE.user.sekolah_id);
-        }
-        clearInterval(STATE.timerInterval);
-        if (STATE.periodicAutoSaveInterval) clearInterval(STATE.periodicAutoSaveInterval);
-        const lockedSchool = getSekolahById(STATE.user.sekolah_id);
-        await handleLogout();
-        showInfoModal(
-          "AKUN UJIAN TERKUNCI (3x Pelanggaran)",
-          `Sistem mengunci sesi ujian Anda karena terdeteksi meninggalkan layar ujian sebanyak 3 kali. Silakan hubungi Proktor ${lockedSchool.nama_sekolah} untuk membuka kunci (Reset Login).`
-        );
-        return;
-      }
-      render();
+  // 2. Batasi & beri peringatan saat tombol ESC atau Logo Windows (Meta/OS) ditekan
+  window.addEventListener('keydown', (e) => {
+    if (STATE.role !== 'siswa') return;
+    const isEsc = e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27;
+    const isWinKey = e.key === 'Meta' || e.key === 'OS' || e.keyCode === 91 || e.keyCode === 92;
+    if (isEsc || isWinKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const namaTombol = isEsc ? 'ESC' : 'Logo Windows';
+      triggerStudentSecurityViolation(`Anda dilarang menekan tombol [${namaTombol}] selama sesi ujian berlangsung!`);
+      enterExamFullscreen();
+    }
+  }, true);
+
+  // 3. Tangkap pelepasan tombol Logo Windows (sering dicegat OS saat keydown)
+  window.addEventListener('keyup', (e) => {
+    if (STATE.role !== 'siswa') return;
+    const isWinKey = e.key === 'Meta' || e.key === 'OS' || e.keyCode === 91 || e.keyCode === 92;
+    if (isWinKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerStudentSecurityViolation('Anda dilarang menggunakan tombol [Logo Windows] selama sesi ujian berlangsung!');
+      enterExamFullscreen();
+    }
+  }, true);
+
+  // 4. Deteksi jika siswa keluar dari mode Layar Penuh (misal karena ESC sistem)
+  document.addEventListener('fullscreenchange', () => {
+    if (STATE.role === 'siswa' && !document.fullscreenElement) {
+      triggerStudentSecurityViolation('Anda keluar dari mode Layar Penuh (Fullscreen). Dilarang menekan ESC atau keluar dari layar penuh selama ujian!', true);
+    }
+  });
+
+  // 5. Otomatis aktifkan klik-perbesar untuk semua gambar di dalam stimulus/soal ujian siswa
+  document.addEventListener('click', (e) => {
+    if (STATE.role !== 'siswa' || STATE.siswaStep !== 'ujian') return;
+    const img = e.target.closest('img');
+    if (!img) return;
+    if (img.closest('#cbt-stimulus-zoom-modal') || img.closest('header') || img.closest('nav')) return;
+    if (img.closest('#student-exam-view')) {
+      openStimulusZoom(img.src, img.alt || 'Perbesar Gambar Stimulus');
     }
   });
 }
@@ -4387,7 +4541,7 @@ function renderSiswaPortal() {
     const isRagu = !!STATE.ragu[q.id];
 
     return `
-      <div class="min-h-screen flex flex-col bg-[#F1F5F9] select-none">
+      <div id="student-exam-view" class="min-h-screen flex flex-col bg-[#F1F5F9] select-none">
         ${renderHeaderPusdatin(STATE.activeExamMapel?.nama_mapel || 'Ujian CBT', `
           <div class="text-right hidden sm:block">
             <div class="text-xs font-bold">${esc(s.nama_lengkap)}</div>
@@ -4434,8 +4588,13 @@ function renderSiswaPortal() {
                 </div>
                 <h3 class="font-extrabold text-slate-900 text-base sm:text-lg mb-3">${esc(stimulus.judul)}</h3>
                 ${stimulus.gambar_url ? `
-                  <div class="mb-4 rounded-xl overflow-hidden border border-amber-200 bg-white p-2">
-                    <img src="${esc(stimulus.gambar_url)}" onerror="this.style.display='none'" alt="Gambar Stimulus" class="max-h-64 mx-auto object-contain" />
+                  <div class="mb-4 rounded-xl overflow-hidden border border-amber-200 bg-white p-2 text-center group">
+                    <img src="${esc(stimulus.gambar_url)}"
+                      onerror="this.style.display='none'"
+                      alt="${esc(stimulus.judul || 'Gambar Stimulus')}"
+                      title="Klik gambar untuk memperbesar"
+                      class="max-h-64 mx-auto object-contain cursor-zoom-in rounded-lg transition group-hover:scale-[1.01]" />
+                    <div class="mt-1.5 text-[11px] font-bold text-amber-800">🔍 Klik gambar untuk memperbesar</div>
                   </div>
                 ` : ''}
                 <div class="prose prose-slate max-w-none text-slate-800 leading-relaxed ${fontCls}">
@@ -4542,11 +4701,11 @@ function renderSiswaPortal() {
               <div class="w-12 h-12 rounded-full bg-red-100 text-red-600 mx-auto flex items-center justify-center text-2xl font-extrabold mb-3">!</div>
               <h3 class="text-lg font-extrabold text-red-700">Peringatan Keamanan Ujian</h3>
               <p class="text-xs text-slate-600 mt-2 leading-relaxed">
-                Sistem mendeteksi Anda berpindah tab atau meninggalkan layar ujian (Pelanggaran ke-<strong>${STATE.violationCount} dari 3</strong>). Jika mencapai 3 kali, akun akan terkunci otomatis!
+                ${esc(STATE.antiCheatReason || 'Sistem mendeteksi Anda berpindah tab atau meninggalkan layar ujian.')} (Pelanggaran ke-<strong>${STATE.violationCount} dari 3</strong>). Jika mencapai 3 kali, akun akan terkunci otomatis!
               </p>
               <button onclick="CBT.closeAntiCheat()"
                 class="mt-5 w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm">
-                Saya Mengerti & Kembali ke Ujian
+                Saya Mengerti &amp; Kembali ke Layar Penuh
               </button>
             </div>
           </div>
@@ -6709,7 +6868,8 @@ window.CBT = {
   nextSoal: () => { if (STATE.currentIdx < STATE.examSoal.length - 1) { STATE.currentIdx++; render(); } },
   toggleRagu: toggleStudentRagu,
   promptSubmit: promptSubmitStudentExam,
-  closeAntiCheat: () => { STATE.antiCheatModal = false; render(); },
+  openStimulusZoom,
+  closeAntiCheat: () => { STATE.antiCheatModal = false; enterExamFullscreen(); render(); },
   setStudentAnswer,
   toggleStudentPGK,
   setStudentSubAnswer,
