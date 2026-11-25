@@ -391,59 +391,211 @@ const DEFAULT_SHIELD_SVG = `data:image/svg+xml;utf8,${encodeURIComponent(
   </svg>`
 )}`;
 
-const MOCK_DB = {
-  pengaturan_sekolah: [
-    {
-      id: "sek-1",
-      nama_sekolah: "SDN GEDONGBOYOUNTUNG",
-      npsn: "20506432",
-      kecamatan: "Kecamatan Turi, Kabupaten Lamongan",
-      logo_url: "",
-      app_badge: "PUSDATIN • ANBK",
-      app_subtitle: "Sistem Asesmen Berbasis Komputer",
-      token_aktif: "SAS2026",
-      tanggal_ujian: "2026-11-25"
-    },
-    {
-      id: "sek-2",
-      nama_sekolah: "SDN SUKOMAJU",
-      npsn: "20506499",
-      kecamatan: "Kecamatan Turi, Kabupaten Lamongan",
-      logo_url: "",
-      app_badge: "PUSDATIN • ANBK",
-      app_subtitle: "Sistem Asesmen Berbasis Komputer",
-      token_aktif: "SKMJ26",
-      tanggal_ujian: "2026-11-25"
+const SAMPLE_SCHOOLS_SEED = [
+  { id: "sek-1", nama_sekolah: "SDN GEDONGBOYOUNTUNG", npsn: "20506432", token_aktif: "SAS2026", proktor_user: "proktor_gbu", proktor_nama: "Sella Ayu, S.Pd.", proktor_nip: "199504122022212008", ruang_nama: "Lab Komputer SDN Gedongboyountung" },
+  { id: "sek-2", nama_sekolah: "SDN SUKOMAJU", npsn: "20506499", token_aktif: "SKMJ26", proktor_user: "proktor_skm", proktor_nama: "Rudi Hartono, S.Pd.", proktor_nip: "199001012020121004", ruang_nama: "Ruang Kelas VI SDN Sukomaju" },
+  { id: "sek-3", nama_sekolah: "SDN TURI 1", npsn: "20506511", token_aktif: "TURI26", proktor_user: "proktor_turi1", proktor_nama: "Dewi Lestari, S.Pd.", proktor_nip: "199103152019032005", ruang_nama: "Lab Komputer SDN Turi 1" },
+  { id: "sek-4", nama_sekolah: "SDN BAMBANG", npsn: "20506524", token_aktif: "BMBG26", proktor_user: "proktor_bambang", proktor_nama: "Agus Setiawan, S.Pd.", proktor_nip: "198807212015021002", ruang_nama: "Ruang Kelas VI SDN Bambang" },
+  { id: "sek-5", nama_sekolah: "SDN KEBEN", npsn: "20506538", token_aktif: "KBN26", proktor_user: "proktor_keben", proktor_nama: "Siti Nurhaliza, S.Pd.", proktor_nip: "199311092020122011", ruang_nama: "Ruang Multimedia SDN Keben" },
+  { id: "sek-6", nama_sekolah: "SDN KEMLAGI LOR", npsn: "20506547", token_aktif: "KMLG26", proktor_user: "proktor_kemlagi", proktor_nama: "Hendro Wijaya, S.Pd.", proktor_nip: "198905182019031003", ruang_nama: "Ruang Kelas VI SDN Kemlagi Lor" }
+];
+
+const SAMPLE_STUDENT_NAMES = [
+  [
+    ["Ahmad Zaki Pratama", "Laki-Laki", "14-05-2014"],
+    ["Aisyah Putri Ramadhani", "Perempuan", "22-07-2014"],
+    ["Bagas Dwi Saputra", "Laki-Laki", "03-01-2014"],
+    ["Citra Amelia Sari", "Perempuan", "19-08-2014"],
+    ["Dani Kurniawan", "Laki-Laki", "11-04-2014"],
+    ["Eka Rahmawati", "Perempuan", "27-09-2014"],
+    ["Fajar Ramadhan", "Laki-Laki", "05-06-2014"],
+    ["Gita Nabila Azzahra", "Perempuan", "16-10-2014"],
+    ["Hendra Kusuma", "Laki-Laki", "09-02-2014"],
+    ["Intan Permatasari", "Perempuan", "25-11-2014"]
+  ],
+  [
+    ["Dimas Saputra", "Laki-Laki", "11-02-2014"],
+    ["Nadia Salsabila", "Perempuan", "18-03-2014"],
+    ["Rizky Aditya Pratama", "Laki-Laki", "07-05-2014"],
+    ["Salsa Maulida", "Perempuan", "29-06-2014"],
+    ["Taufik Hidayat", "Laki-Laki", "13-08-2014"],
+    ["Umi Kalsum", "Perempuan", "02-09-2014"],
+    ["Vino Alfarizi", "Laki-Laki", "21-10-2014"],
+    ["Wulan Dari", "Perempuan", "15-12-2014"],
+    ["Yusuf Maulana", "Laki-Laki", "08-01-2014"],
+    ["Zahra Khairunnisa", "Perempuan", "24-04-2014"]
+  ],
+  [
+    ["Arif Rahman Hakim", "Laki-Laki", "10-03-2014"],
+    ["Bunga Citra Kirana", "Perempuan", "14-06-2014"],
+    ["Candra Wijaya", "Laki-Laki", "28-07-2014"],
+    ["Dina Oktaviani", "Perempuan", "04-10-2014"],
+    ["Eko Prasetyo", "Laki-Laki", "19-11-2014"],
+    ["Fitri Handayani", "Perempuan", "06-01-2014"],
+    ["Galih Permana", "Laki-Laki", "23-02-2014"],
+    ["Hana Pertiwi", "Perempuan", "12-05-2014"],
+    ["Ilham Syahputra", "Laki-Laki", "30-08-2014"],
+    ["Jihan Aulia", "Perempuan", "17-09-2014"]
+  ],
+  [
+    ["Kevin Mahendra", "Laki-Laki", "05-04-2014"],
+    ["Laila Safitri", "Perempuan", "21-05-2014"],
+    ["Mochamad Rafi", "Laki-Laki", "09-07-2014"],
+    ["Nayla Azzahra", "Perempuan", "16-08-2014"],
+    ["Oki Setiawan", "Laki-Laki", "27-09-2014"],
+    ["Putri Wulandari", "Perempuan", "13-11-2014"],
+    ["Qomarul Huda", "Laki-Laki", "01-12-2014"],
+    ["Rina Anggraini", "Perempuan", "18-02-2014"],
+    ["Satria Nugroho", "Laki-Laki", "26-03-2014"],
+    ["Tiara Maharani", "Perempuan", "11-06-2014"]
+  ],
+  [
+    ["Aditya Firmansyah", "Laki-Laki", "07-01-2014"],
+    ["Bella Puspita", "Perempuan", "20-02-2014"],
+    ["Dafa Alamsyah", "Laki-Laki", "15-04-2014"],
+    ["Elsa Novitasari", "Perempuan", "03-06-2014"],
+    ["Farhan Muzakki", "Laki-Laki", "22-07-2014"],
+    ["Gina Rahayu", "Perempuan", "10-09-2014"],
+    ["Hafidz Akbar", "Laki-Laki", "29-10-2014"],
+    ["Indah Kusuma", "Perempuan", "14-12-2014"],
+    ["Joko Susilo", "Laki-Laki", "08-03-2014"],
+    ["Kartika Sari", "Perempuan", "25-05-2014"]
+  ],
+  [
+    ["Lukman Hakim", "Laki-Laki", "12-02-2014"],
+    ["Maya Puspitasari", "Perempuan", "19-03-2014"],
+    ["Naufal Ramadhan", "Laki-Laki", "04-05-2014"],
+    ["Olivia Larasati", "Perempuan", "27-06-2014"],
+    ["Pandu Pratama", "Laki-Laki", "16-08-2014"],
+    ["Ratna Dewi", "Perempuan", "09-10-2014"],
+    ["Surya Darmawan", "Laki-Laki", "23-11-2014"],
+    ["Tania Melati", "Perempuan", "05-12-2014"],
+    ["Wahyu Saputra", "Laki-Laki", "18-01-2014"],
+    ["Yuni Astuti", "Perempuan", "30-04-2014"]
+  ]
+];
+
+const MOCK_STUDENTS_SEED = [];
+const MOCK_JADWAL_SEED = [];
+const MOCK_HASIL_SEED = [];
+let mockStudentCounter = 1;
+
+SAMPLE_SCHOOLS_SEED.forEach((sk, sIdx) => {
+  const names = SAMPLE_STUDENT_NAMES[sIdx] || [];
+  names.forEach(([nama, jk, tgl], nIdx) => {
+    const uid = `u-${mockStudentCounter}`;
+    const jid = `j-${mockStudentCounter}`;
+    const nisn = `01488${sIdx + 1}${String(nIdx + 1).padStart(4, '0')}`;
+    const ruangId = `r-${sIdx + 1}`;
+    const sesiId = nIdx < 5 ? `s-${sIdx + 1}a` : `s-${sIdx + 1}b`;
+
+    // Pastikan siswa pertama (u-1) selalu "Belum Mulai" agar tombol Quick Siswa (GBU) siap mulai ujian
+    let statusUjian = 'Belum Mulai';
+    let pelanggaran = 0;
+    if (!(sIdx === 0 && nIdx === 0)) {
+      if (nIdx === 1 || nIdx === 2) statusUjian = 'Sedang Mengerjakan';
+      else if (nIdx === 3) { statusUjian = 'Terkunci'; pelanggaran = 3; }
+      else if (nIdx === 4) statusUjian = 'Selesai';
     }
-  ],
-  ruang_ujian: [
-    { id: "r-1", sekolah_id: "sek-1", kode_ruang: "R-01", nama_ruang: "Lab Komputer SDN Gedongboyountung", kapasitas: 35 },
-    { id: "r-2", sekolah_id: "sek-2", kode_ruang: "R-01", nama_ruang: "Ruang Kelas VI SDN Sukomaju", kapasitas: 30 }
-  ],
-  sesi_ujian: [
-    { id: "s-1", sekolah_id: "sek-1", nama_sesi: "Sesi 1 (Pagi)", waktu_mulai: "07:30:00", waktu_selesai: "09:30:00" },
-    { id: "s-2", sekolah_id: "sek-2", nama_sesi: "Sesi 1 (Pagi)", waktu_mulai: "07:30:00", waktu_selesai: "09:30:00" }
-  ],
-  proktor: [
-    { id: "p-1", sekolah_id: "sek-1", username: "proktor_gbu", password: "123", nama_proktor: "Sella Ayu, S.Pd.", nip: "199504122022212008", ruang_id: "r-1" },
-    { id: "p-2", sekolah_id: "sek-2", username: "proktor_skm", password: "123", nama_proktor: "Rudi Hartono, S.Pd.", nip: "199001012020121004", ruang_id: "r-2" }
-  ],
+
+    MOCK_STUDENTS_SEED.push({
+      id: uid,
+      sekolah_id: sk.id,
+      username: sIdx === 0 && nIdx === 0 ? '0148829101' : nisn,
+      password: '123',
+      nama_lengkap: nama,
+      kelas: 'VI',
+      jenis_kelamin: jk,
+      tgl_lahir: tgl,
+      foto_url: '',
+      ruang_id: ruangId,
+      sesi_id: sesiId
+    });
+
+    MOCK_JADWAL_SEED.push({
+      id: jid,
+      sekolah_id: sk.id,
+      siswa_id: uid,
+      mapel_id: 'm-1',
+      ruang_id: ruangId,
+      sesi_id: sesiId,
+      status_ujian: statusUjian,
+      pelanggaran
+    });
+
+    if (statusUjian === 'Selesai') {
+      MOCK_HASIL_SEED.push({
+        id: `h-${mockStudentCounter}`,
+        sekolah_id: sk.id,
+        siswa_id: uid,
+        mapel_id: 'm-1',
+        skor_akhir: 68.75,
+        total_skor_mentah: 11,
+        total_bobot_maks: 16,
+        jumlah_benar: 4,
+        jumlah_salah: 1,
+        jumlah_parsial: 0,
+        jumlah_kosong: 1,
+        detail_jawaban: {
+          "q-1": { nomor_urut: 1, jenis_soal: "PG", jawaban: "A", kunci: "A", skor: 2, bobot: 2, status: "benar" },
+          "q-2": { nomor_urut: 2, jenis_soal: "PGK", jawaban: ["A", "C"], kunci: "A,C", skor: 3, bobot: 3, status: "benar" },
+          "q-3": { nomor_urut: 3, jenis_soal: "BS", jawaban: { "0": "B", "1": "B" }, kunci: "S,B", skor: 1, bobot: 2, status: "parsial" },
+          "q-4": { nomor_urut: 4, jenis_soal: "MJ", jawaban: { "0": "0", "1": "1" }, kunci: "0:0,1:1", skor: 3, bobot: 3, status: "benar" },
+          "q-5": { nomor_urut: 5, jenis_soal: "ISIAN", jawaban: "Lamongan", kunci: "Lamongan|Kab. Lamongan|Kabupaten Lamongan", skor: 2, bobot: 2, status: "benar" },
+          "q-6": { nomor_urut: 6, jenis_soal: "URAIAN", jawaban: "Sampah plastik mencemari sungai dan menurunkan kadar oksigen sehingga ikan sulit bernapas.", kunci: "Sampah plastik sulit terurai, mencemari air, menurunkan oksigen, dan membahayakan ikan.", skor: 0, bobot: 4, status: "menunggu_koreksi" }
+        },
+        status: 'Menunggu Koreksi',
+        waktu_mulai: '2026-11-25T00:35:00.000Z',
+        waktu_selesai: '2026-11-25T01:15:00.000Z'
+      });
+    }
+
+    mockStudentCounter++;
+  });
+});
+
+const MOCK_DB = {
+  pengaturan_sekolah: SAMPLE_SCHOOLS_SEED.map(sk => ({
+    id: sk.id,
+    nama_sekolah: sk.nama_sekolah,
+    npsn: sk.npsn,
+    kecamatan: "Kecamatan Turi, Kabupaten Lamongan",
+    logo_url: "",
+    app_badge: "PUSDATIN • ANBK",
+    app_subtitle: "Sistem Asesmen Berbasis Komputer",
+    token_aktif: sk.token_aktif,
+    tanggal_ujian: "2026-11-25"
+  })),
+  ruang_ujian: SAMPLE_SCHOOLS_SEED.map((sk, idx) => ({
+    id: `r-${idx + 1}`,
+    sekolah_id: sk.id,
+    kode_ruang: "R-01",
+    nama_ruang: sk.ruang_nama,
+    kapasitas: 35
+  })),
+  sesi_ujian: SAMPLE_SCHOOLS_SEED.flatMap((sk, idx) => ([
+    { id: `s-${idx + 1}a`, sekolah_id: sk.id, nama_sesi: "Sesi 1 (Pagi)", waktu_mulai: "07:30:00", waktu_selesai: "09:30:00" },
+    { id: `s-${idx + 1}b`, sekolah_id: sk.id, nama_sesi: "Sesi 2 (Siang)", waktu_mulai: "10:00:00", waktu_selesai: "12:00:00" }
+  ])),
+  proktor: SAMPLE_SCHOOLS_SEED.map((sk, idx) => ({
+    id: `p-${idx + 1}`,
+    sekolah_id: sk.id,
+    username: sk.proktor_user,
+    password: "123",
+    nama_proktor: sk.proktor_nama,
+    nip: sk.proktor_nip,
+    ruang_id: `r-${idx + 1}`
+  })),
   mapel: [
     {
-      id: "m-1", sekolah_id: null, kode_mapel: "LIT-VI", nama_mapel: "Asesmen Literasi & Numerasi Kelas VI",
+      id: "m-1", sekolah_id: null, sekolah_ids: [], kode_mapel: "LIT-VI", nama_mapel: "Asesmen Literasi & Numerasi Kelas VI",
       kelas_target: "VI", durasi_menit: 60, tanggal_mulai: "2026-01-01",
       jam_mulai: "00:00:00", jam_selesai: "23:59:59",
       acak_soal: false, acak_opsi: false, status: "Aktif"
     }
   ],
-  siswa: [
-    { id: "u-1", sekolah_id: "sek-1", username: "0148829101", password: "123", nama_lengkap: "Ahmad Zaki Pratama", kelas: "VI", jenis_kelamin: "Laki-Laki", tgl_lahir: "14-05-2014", foto_url: "", ruang_id: "r-1", sesi_id: "s-1" },
-    { id: "u-2", sekolah_id: "sek-2", username: "0148829201", password: "123", nama_lengkap: "Dimas Saputra (SDN Sukomaju)", kelas: "VI", jenis_kelamin: "Laki-Laki", tgl_lahir: "11-02-2014", foto_url: "", ruang_id: "r-2", sesi_id: "s-2" }
-  ],
-  jadwal_peserta: [
-    { id: "j-1", sekolah_id: "sek-1", siswa_id: "u-1", mapel_id: "m-1", ruang_id: "r-1", sesi_id: "s-1", status_ujian: "Belum Mulai", pelanggaran: 0 },
-    { id: "j-2", sekolah_id: "sek-2", siswa_id: "u-2", mapel_id: "m-1", ruang_id: "r-2", sesi_id: "s-2", status_ujian: "Sedang Mengerjakan", pelanggaran: 0 }
-  ],
+  siswa: MOCK_STUDENTS_SEED,
+  jadwal_peserta: MOCK_JADWAL_SEED,
   stimulus: [
     {
       id: "st-1", mapel_id: "m-1", urutan: 1,
@@ -493,7 +645,7 @@ const MOCK_DB = {
       kunci_jawaban: "Sampah plastik sulit terurai, mencemari air, menurunkan oksigen, dan membahayakan ikan.", bobot: 4
     }
   ],
-  hasil_ujian: []
+  hasil_ujian: MOCK_HASIL_SEED
 };
 
 /* ============================================================================
@@ -688,6 +840,21 @@ function formatTanggalSlash(dateStr) {
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
 }
 
+function formatSesiDisplay(se) {
+  if (!se) return '';
+  const mulaiRaw = String(se.waktu_mulai || '07:30').slice(0, 5);
+  const selesaiRaw = String(se.waktu_selesai || '09:30').slice(0, 5);
+  const hh = Number(mulaiRaw.split(':')[0]);
+  const waktuLabel = Number.isFinite(hh)
+    ? (hh < 11 ? 'Pagi' : (hh < 15 ? 'Siang' : 'Sore'))
+    : '';
+  let namaSesi = String(se.nama_sesi || 'Sesi').trim();
+  if (waktuLabel && /\((pagi|siang|sore)\)/i.test(namaSesi)) {
+    namaSesi = namaSesi.replace(/\((pagi|siang|sore)\)/i, `(${waktuLabel})`);
+  }
+  return `${namaSesi} (${mulaiRaw.replace(':', '.')} - ${selesaiRaw.replace(':', '.')} WIB)`;
+}
+
 function formatTanggalDMY(dateStr) {
   if (!dateStr) return '-';
   const clean = String(dateStr).trim().slice(0, 10);
@@ -736,6 +903,39 @@ function getAppBranding() {
     app_badge: primarySchool.app_badge || 'PUSDATIN • ANBK',
     app_subtitle: primarySchool.app_subtitle || 'Sistem Asesmen Berbasis Komputer'
   };
+}
+
+function getMapelSchoolIds(mapel) {
+  if (!mapel) return [];
+  if (Array.isArray(mapel.sekolah_ids) && mapel.sekolah_ids.length > 0) {
+    return [...new Set(mapel.sekolah_ids.map(String).filter(Boolean))];
+  }
+  if (typeof mapel.sekolah_ids === 'string' && mapel.sekolah_ids.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(mapel.sekolah_ids);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return [...new Set(parsed.map(String).filter(Boolean))];
+      }
+    } catch (_) {}
+  }
+  if (mapel.sekolah_id) return [String(mapel.sekolah_id)];
+  try {
+    const localSaved = localStorage.getItem(`cbt_mapel_schools_${mapel.id}`);
+    if (localSaved) {
+      const parsedLocal = JSON.parse(localSaved);
+      if (Array.isArray(parsedLocal) && parsedLocal.length > 0) {
+        return [...new Set(parsedLocal.map(String).filter(Boolean))];
+      }
+    }
+  } catch (_) {}
+  return [];
+}
+
+function isMapelForSchool(mapel, schoolId) {
+  if (!schoolId || schoolId === 'ALL') return true;
+  const ids = getMapelSchoolIds(mapel);
+  if (ids.length === 0) return true;
+  return ids.includes(String(schoolId));
 }
 
 function renderRichText(rawHtml) {
@@ -791,7 +991,7 @@ async function dbSelect(table, orderBy = null, schoolFilterId = null, columns = 
     let rows = JSON.parse(JSON.stringify(MOCK_DB[table] || []));
     if (schoolFilterId) {
       if (table === 'mapel') {
-        rows = rows.filter(r => r.sekolah_id === schoolFilterId || !r.sekolah_id);
+        rows = rows.filter(r => isMapelForSchool(r, schoolFilterId));
       } else {
         rows = rows.filter(r => r.sekolah_id === schoolFilterId);
       }
@@ -800,17 +1000,17 @@ async function dbSelect(table, orderBy = null, schoolFilterId = null, columns = 
   }
 
   let q = sb.from(table).select(columns);
-  if (schoolFilterId) {
-    if (table === 'mapel') {
-      q = q.or(`sekolah_id.eq.${schoolFilterId},sekolah_id.is.null`);
-    } else {
-      q = q.eq('sekolah_id', schoolFilterId);
-    }
+  if (schoolFilterId && table !== 'mapel') {
+    q = q.eq('sekolah_id', schoolFilterId);
   }
   if (orderBy) q = q.order(orderBy, { ascending: true });
   const { data, error } = await q;
   if (error) throw error;
-  return data || [];
+  let rows = data || [];
+  if (schoolFilterId && table === 'mapel') {
+    rows = rows.filter(r => isMapelForSchool(r, schoolFilterId));
+  }
+  return rows;
 }
 
 async function dbInsert(table, payload) {
@@ -935,7 +1135,7 @@ async function loadStudentScopedData(siswa) {
     STATE.sekolah = studentSchool;
     STATE.ruang = JSON.parse(JSON.stringify(MOCK_DB.ruang_ujian || [])).filter(r => r.sekolah_id === schoolId);
     STATE.sesi = JSON.parse(JSON.stringify(MOCK_DB.sesi_ujian || [])).filter(x => x.sekolah_id === schoolId);
-    STATE.mapelList = JSON.parse(JSON.stringify(MOCK_DB.mapel || [])).filter(m => m.status === 'Aktif' && (!m.sekolah_id || m.sekolah_id === schoolId));
+    STATE.mapelList = JSON.parse(JSON.stringify(MOCK_DB.mapel || [])).filter(m => m.status === 'Aktif' && isMapelForSchool(m, schoolId));
     STATE.jadwalList = JSON.parse(JSON.stringify(MOCK_DB.jadwal_peserta || [])).filter(j => j.siswa_id === siswa.id);
     STATE.hasilList = JSON.parse(JSON.stringify(MOCK_DB.hasil_ujian || [])).filter(h => h.siswa_id === siswa.id);
     return;
@@ -946,8 +1146,7 @@ async function loadStudentScopedData(siswa) {
     sb.from('sesi_ujian').select('id,sekolah_id,nama_sesi,waktu_mulai,waktu_selesai').eq('sekolah_id', schoolId),
     sb.from('mapel')
       .select('*')
-      .eq('status', 'Aktif')
-      .or(`sekolah_id.eq.${schoolId},sekolah_id.is.null`),
+      .eq('status', 'Aktif'),
     sb.from('jadwal_peserta').select('*').eq('siswa_id', siswa.id),
     sb.from('hasil_ujian').select('id,siswa_id,mapel_id,skor_akhir,status,waktu_selesai').eq('siswa_id', siswa.id)
   ]);
@@ -958,7 +1157,7 @@ async function loadStudentScopedData(siswa) {
   STATE.sekolah = studentSchool;
   STATE.ruang = ruangRes.data || [];
   STATE.sesi = sesiRes.data || [];
-  STATE.mapelList = mapelRes.data || [];
+  STATE.mapelList = (mapelRes.data || []).filter(m => isMapelForSchool(m, schoolId));
   STATE.jadwalList = jadwalRes.data || [];
   STATE.hasilList = hasilRes.data || [];
 }
@@ -1927,11 +2126,55 @@ async function executeSubmitExam(isAutoTimeout = false) {
 /* ============================================================================
    HELPER PARSER EXCEL & NORMALISASI HEADER KOLOM
    ============================================================================ */
+async function ensureXlsxLoaded() {
+  if (typeof window.XLSX !== 'undefined') return true;
+  const fallbackUrls = [
+    'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
+  ];
+  for (const url of fallbackUrls) {
+    try {
+      await new Promise((resolve, reject) => {
+        const sc = document.createElement('script');
+        sc.src = url;
+        sc.onload = resolve;
+        sc.onerror = reject;
+        document.head.appendChild(sc);
+      });
+      if (typeof window.XLSX !== 'undefined') return true;
+    } catch (_) {}
+  }
+  return typeof window.XLSX !== 'undefined';
+}
+
 function parseExcelWorkbook(arrayBuffer) {
+  if (typeof window.XLSX === 'undefined') {
+    throw new Error("Library Excel (SheetJS) belum termuat. Periksa koneksi internet lalu muat ulang halaman.");
+  }
   const data = new Uint8Array(arrayBuffer);
-  const wb = XLSX.read(data, { type: 'array' });
+  const wb = window.XLSX.read(data, { type: 'array' });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  if (!sheet) return [];
+
+  const matrix = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  const knownHeaders = [
+    'NPSN', 'KODE_NPSN', 'NPSN_SEKOLAH', 'NO_NPSN', 'NAMA_SEKOLAH', 'SEKOLAH', 'NAMA_SATUAN_PENDIDIKAN',
+    'USERNAME_NISN', 'NISN_USERNAME', 'USERNAME', 'NISN', 'NO_PESERTA', 'NAMA_LENGKAP', 'NAMA_SISWA',
+    'NAMA_PROKTOR', 'NAMA_GURU', 'KODE_RUANG', 'NAMA_RUANG', 'NAMA_SESI', 'WAKTU_MULAI', 'PERTANYAAN', 'SOAL'
+  ];
+
+  let headerRowIdx = 0;
+  for (let i = 0; i < Math.min(matrix.length, 10); i++) {
+    const normCells = (matrix[i] || []).map(c =>
+      String(c ?? '').trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '')
+    );
+    if (normCells.some(cell => knownHeaders.includes(cell))) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+
+  const rawRows = window.XLSX.utils.sheet_to_json(sheet, { range: headerRowIdx, defval: '' });
   return rawRows.map(row => {
     const clean = {};
     Object.keys(row).forEach(k => {
@@ -1996,74 +2239,105 @@ function downloadTemplateSiswa() {
 }
 
 function handleImportSiswaExcel(e) {
-  const file = e.target.files[0];
-  e.target.value = '';
+  const inputEl = e.target;
+  const file = inputEl?.files?.[0];
   if (!file) return;
   const reader = new FileReader();
+  reader.onerror = () => {
+    inputEl.value = '';
+    notify("Gagal membaca file Excel siswa.", "error");
+  };
   reader.onload = async (evt) => {
-    try {
-      const rows = parseExcelWorkbook(evt.target.result);
-      if (!rows.length) return notify("File Excel kosong atau tidak terbaca.", "error");
+    inputEl.value = '';
+    await runWithBusyLock('import-siswa-excel', async () => {
+      try {
+        await ensureXlsxLoaded();
+        const rows = parseExcelWorkbook(evt.target.result);
+        if (!rows.length) return notify("File Excel kosong atau tidak terbaca.", "error");
 
-      const defaultSchoolId = (STATE.activeSekolahId && STATE.activeSekolahId !== 'ALL')
-        ? STATE.activeSekolahId
-        : STATE.sekolahList[0]?.id;
+        const defaultSchoolId = (STATE.activeSekolahId && STATE.activeSekolahId !== 'ALL')
+          ? STATE.activeSekolahId
+          : STATE.sekolahList[0]?.id;
 
-      const dedupMap = new Map();
-      rows.forEach(r => {
-        const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN']);
-        const targetSchool = rowNpsn
-          ? STATE.sekolahList.find(s => String(s.npsn).trim() === rowNpsn)
-          : STATE.sekolahList.find(s => s.id === defaultSchoolId);
-        const sid = targetSchool ? targetSchool.id : defaultSchoolId;
+        const dedupMap = new Map();
+        rows.forEach(r => {
+          const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN', 'NPSN_SEKOLAH']).replace(/\.0$/, '');
+          const targetSchool = rowNpsn
+            ? STATE.sekolahList.find(s => String(s.npsn).trim() === rowNpsn)
+            : STATE.sekolahList.find(s => s.id === defaultSchoolId);
+          const sid = targetSchool ? targetSchool.id : defaultSchoolId;
 
-        const kodeRuang = pickCol(r, ['KODE_RUANG', 'RUANG']);
-        const namaSesi = pickCol(r, ['NAMA_SESI', 'SESI']);
-        const ruang = STATE.ruang.find(x => x.sekolah_id === sid && String(x.kode_ruang).trim().toLowerCase() === kodeRuang.toLowerCase());
-        const sesi = STATE.sesi.find(x => x.sekolah_id === sid && String(x.nama_sesi).trim().toLowerCase() === namaSesi.toLowerCase());
+          const kodeRuang = pickCol(r, ['KODE_RUANG', 'RUANG', 'NAMA_RUANG']);
+          const namaSesi = pickCol(r, ['NAMA_SESI', 'SESI']);
+          const ruang = kodeRuang
+            ? STATE.ruang.find(x => x.sekolah_id === sid && (
+                String(x.kode_ruang).trim().toLowerCase() === kodeRuang.toLowerCase() ||
+                String(x.nama_ruang).trim().toLowerCase() === kodeRuang.toLowerCase()
+              ))
+            : null;
+          const sesi = namaSesi
+            ? STATE.sesi.find(x => x.sekolah_id === sid && (
+                String(x.nama_sesi).trim().toLowerCase() === namaSesi.toLowerCase() ||
+                String(x.nama_sesi).trim().toLowerCase().includes(namaSesi.toLowerCase()) ||
+                namaSesi.toLowerCase().includes(String(x.nama_sesi).trim().toLowerCase())
+              ))
+            : null;
 
-        const username = pickCol(r, ['USERNAME_NISN', 'NISN', 'USERNAME', 'NO_PESERTA']);
-        const nama_lengkap = pickCol(r, ['NAMA_LENGKAP', 'NAMA_SISWA', 'NAMA']);
+          const username = pickCol(r, ['USERNAME_NISN', 'NISN_USERNAME', 'NISN', 'USERNAME', 'NO_PESERTA', 'NIS']).replace(/\.0$/, '');
+          const nama_lengkap = pickCol(r, ['NAMA_LENGKAP', 'NAMA_SISWA', 'NAMA_PESERTA', 'NAMA']);
 
-        if (username && nama_lengkap) {
-          dedupMap.set(username, {
-            sekolah_id: sid,
-            username,
-            password: pickCol(r, ['PASSWORD', 'PASS', 'PIN'], '123'),
-            nama_lengkap,
-            kelas: pickCol(r, ['KELAS', 'ROMBEL'], 'VI'),
-            jenis_kelamin: pickCol(r, ['JENIS_KELAMIN', 'JK', 'GENDER'], 'Laki-Laki'),
-            tgl_lahir: pickCol(r, ['TGL_LAHIR', 'TANGGAL_LAHIR']),
-            ruang_id: ruang ? ruang.id : (STATE.ruang.find(x => x.sekolah_id === sid)?.id || null),
-            sesi_id: sesi ? sesi.id : (STATE.sesi.find(x => x.sekolah_id === sid)?.id || null)
-          });
+          if (username && nama_lengkap) {
+            dedupMap.set(username, {
+              sekolah_id: sid,
+              username,
+              password: pickCol(r, ['PASSWORD', 'PASS', 'PIN'], '123').replace(/\.0$/, ''),
+              nama_lengkap,
+              kelas: pickCol(r, ['KELAS', 'ROMBEL'], 'VI'),
+              jenis_kelamin: pickCol(r, ['JENIS_KELAMIN', 'JK', 'GENDER'], 'Laki-Laki'),
+              tgl_lahir: pickCol(r, ['TGL_LAHIR', 'TANGGAL_LAHIR']),
+              ruang_id: ruang ? ruang.id : (STATE.ruang.find(x => x.sekolah_id === sid)?.id || null),
+              sesi_id: sesi ? sesi.id : (STATE.sesi.find(x => x.sekolah_id === sid)?.id || null)
+            });
+          }
+        });
+
+        const payloads = Array.from(dedupMap.values());
+        if (!payloads.length) {
+          return notify("Tidak ada baris valid. Pastikan kolom USERNAME_NISN dan NAMA_LENGKAP terisi.", "error");
         }
-      });
 
-      const payloads = Array.from(dedupMap.values());
-      if (!payloads.length) {
-        return notify("Tidak ada baris valid. Pastikan kolom USERNAME_NISN dan NAMA_LENGKAP terisi.", "error");
+        const toInsert = [];
+        let updatedCount = 0;
+        for (const item of payloads) {
+          const existing = STATE.siswaList.find(s => String(s.username).trim() === String(item.username).trim());
+          if (existing) {
+            await dbUpdate('siswa', existing.id, item);
+            updatedCount++;
+          } else {
+            toInsert.push(item);
+          }
+        }
+        if (toInsert.length > 0) {
+          await dbInsert('siswa', toInsert);
+        }
+
+        const importedSchoolIds = [...new Set(payloads.map(p => p.sekolah_id).filter(Boolean))];
+        if (STATE.activeSekolahId && STATE.activeSekolahId !== 'ALL' && !importedSchoolIds.includes(STATE.activeSekolahId)) {
+          STATE.activeSekolahId = importedSchoolIds.length === 1 ? importedSchoolIds[0] : 'ALL';
+        }
+
+        await loadRoleScopedData();
+        notify(`Berhasil mengimpor ${payloads.length} data siswa (${toInsert.length} baru, ${updatedCount} diperbarui)!`, "success");
+      } catch (err) {
+        notify("Gagal impor Excel siswa: " + err.message, "error");
       }
-
-      await dbUpsert('siswa', payloads, 'username');
-
-      const importedSchoolIds = [...new Set(payloads.map(p => p.sekolah_id).filter(Boolean))];
-      if (STATE.activeSekolahId && STATE.activeSekolahId !== 'ALL' && !importedSchoolIds.includes(STATE.activeSekolahId)) {
-        STATE.activeSekolahId = importedSchoolIds.length === 1 ? importedSchoolIds[0] : 'ALL';
-      }
-
-      await loadRoleScopedData();
-      notify(`Berhasil mengimpor ${payloads.length} data siswa!`, "success");
-    } catch (err) {
-      notify("Gagal impor Excel siswa: " + err.message, "error");
-    }
+    });
   };
   reader.readAsArrayBuffer(file);
 }
 
 function exportSiswaExcel() {
-  const list = getScopedSiswaList();
-  const rows = list.map((s, idx) => {
+  const rows = getScopedSiswaList().map((s, idx) => {
     const sek = getSekolahById(s.sekolah_id);
     const r = STATE.ruang.find(x => x.id === s.ruang_id);
     const se = STATE.sesi.find(x => x.id === s.sesi_id);
@@ -2076,7 +2350,7 @@ function exportSiswaExcel() {
       NAMA_LENGKAP: s.nama_lengkap,
       KELAS: s.kelas,
       JENIS_KELAMIN: s.jenis_kelamin,
-      TGL_LAHIR: s.tgl_lahir,
+      TGL_LAHIR: s.tgl_lahir || '',
       KODE_RUANG: r ? r.kode_ruang : '-',
       NAMA_SESI: se ? se.nama_sesi : '-'
     };
@@ -2084,7 +2358,7 @@ function exportSiswaExcel() {
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Data_Siswa");
-  XLSX.writeFile(wb, "Data_Siswa_CBT_MultiSekolah.xlsx");
+  XLSX.writeFile(wb, "Data_Siswa_CBT.xlsx");
 }
 
 function downloadTemplateSekolah() {
@@ -2094,7 +2368,6 @@ function downloadTemplateSekolah() {
       NAMA_SEKOLAH: "SDN GEDONGBOYOUNTUNG",
       KECAMATAN: "Kecamatan Turi, Kabupaten Lamongan",
       TOKEN_AKTIF: "SAS2026",
-      TANGGAL_UJIAN: "2026-11-25",
       LOGO_URL: ""
     }
   ];
@@ -2105,42 +2378,69 @@ function downloadTemplateSekolah() {
 }
 
 function handleImportSekolahExcel(e) {
-  const file = e.target.files[0];
-  e.target.value = '';
+  const inputEl = e.target;
+  const file = inputEl?.files?.[0];
   if (!file) return;
   const reader = new FileReader();
+  reader.onerror = () => {
+    inputEl.value = '';
+    notify("Gagal membaca file Excel sekolah.", "error");
+  };
   reader.onload = async (evt) => {
-    try {
-      const rows = parseExcelWorkbook(evt.target.result);
-      if (!rows.length) return notify("File Excel sekolah kosong.", "error");
+    inputEl.value = '';
+    await runWithBusyLock('import-sekolah-excel', async () => {
+      try {
+        await ensureXlsxLoaded();
+        const rows = parseExcelWorkbook(evt.target.result);
+        if (!rows.length) return notify("File Excel sekolah kosong atau tidak terbaca.", "error");
 
-      const dedupMap = new Map();
-      rows.forEach(r => {
-        const npsn = pickCol(r, ['NPSN', 'KODE_NPSN']);
-        const nama_sekolah = pickCol(r, ['NAMA_SEKOLAH', 'SEKOLAH', 'NAMA_INSTANSI']).toUpperCase();
-        if (npsn && nama_sekolah) {
-          dedupMap.set(npsn, {
-            npsn,
-            nama_sekolah,
-            kecamatan: pickCol(r, ['KECAMATAN', 'ALAMAT', 'WILAYAH'], 'Kecamatan Turi, Kabupaten Lamongan'),
-            token_aktif: pickCol(r, ['TOKEN_AKTIF', 'TOKEN'], 'SAS2026').toUpperCase(),
-            tanggal_ujian: pickCol(r, ['TANGGAL_UJIAN', 'TANGGAL'], '2026-11-25'),
-            logo_url: pickCol(r, ['LOGO_URL', 'LOGO'])
-          });
+        const dedupMap = new Map();
+        rows.forEach(r => {
+          const npsn = pickCol(r, ['NPSN', 'KODE_NPSN', 'NPSN_SEKOLAH', 'NO_NPSN']).replace(/\.0$/, '');
+          const nama_sekolah = pickCol(r, ['NAMA_SEKOLAH', 'SEKOLAH', 'NAMA_SATUAN_PENDIDIKAN', 'NAMA']).toUpperCase();
+          if (npsn && nama_sekolah) {
+            dedupMap.set(npsn, {
+              npsn,
+              nama_sekolah,
+              kecamatan: pickCol(r, ['KECAMATAN', 'KECAMATAN_KABUPATEN', 'ALAMAT', 'WILAYAH'], 'Kecamatan Turi, Kabupaten Lamongan'),
+              token_aktif: pickCol(r, ['TOKEN_AKTIF', 'TOKEN_UJIAN', 'TOKEN'], 'SAS2026').toUpperCase(),
+              logo_url: pickCol(r, ['LOGO_URL', 'URL_LOGO', 'URL_LOGO_SEKOLAH', 'LOGO'], '')
+            });
+          }
+        });
+
+        const payloads = Array.from(dedupMap.values());
+        if (!payloads.length) {
+          return notify("Tidak ada baris valid. Pastikan kolom NPSN dan NAMA_SEKOLAH terisi.", "error");
         }
-      });
 
-      const payloads = Array.from(dedupMap.values());
-      if (!payloads.length) {
-        return notify("Tidak ada baris valid. Pastikan kolom NPSN dan NAMA_SEKOLAH terisi.", "error");
+        const toInsert = [];
+        let updatedCount = 0;
+        for (const item of payloads) {
+          const existing = STATE.sekolahList.find(s => String(s.npsn).trim() === String(item.npsn).trim());
+          if (existing) {
+            const updateData = {
+              nama_sekolah: item.nama_sekolah,
+              kecamatan: item.kecamatan,
+              token_aktif: item.token_aktif
+            };
+            if (item.logo_url) updateData.logo_url = item.logo_url;
+            await dbUpdate('pengaturan_sekolah', existing.id, updateData);
+            updatedCount++;
+          } else {
+            toInsert.push(item);
+          }
+        }
+        if (toInsert.length > 0) {
+          await dbInsert('pengaturan_sekolah', toInsert);
+        }
+
+        await loadRoleScopedData();
+        notify(`Berhasil mengimpor ${payloads.length} data sekolah (${toInsert.length} baru, ${updatedCount} diperbarui)!`, "success");
+      } catch (err) {
+        notify("Gagal impor Excel sekolah: " + err.message, "error");
       }
-
-      await dbUpsert('pengaturan_sekolah', payloads, 'npsn');
-      await loadRoleScopedData();
-      notify(`Berhasil mengimpor ${payloads.length} data sekolah (NPSN)!`, "success");
-    } catch (err) {
-      notify("Gagal impor Excel sekolah: " + err.message, "error");
-    }
+    });
   };
   reader.readAsArrayBuffer(file);
 }
@@ -2152,7 +2452,6 @@ function exportSekolahExcel() {
     NAMA_SEKOLAH: sk.nama_sekolah,
     KECAMATAN: sk.kecamatan,
     TOKEN_AKTIF: sk.token_aktif,
-    TANGGAL_UJIAN: sk.tanggal_ujian,
     LOGO_URL: sk.logo_url || ''
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
@@ -2180,56 +2479,80 @@ function downloadTemplateProktor() {
 }
 
 function handleImportProktorExcel(e) {
-  const file = e.target.files[0];
-  e.target.value = '';
+  const inputEl = e.target;
+  const file = inputEl?.files?.[0];
   if (!file) return;
   const reader = new FileReader();
+  reader.onerror = () => {
+    inputEl.value = '';
+    notify("Gagal membaca file Excel proktor.", "error");
+  };
   reader.onload = async (evt) => {
-    try {
-      const rows = parseExcelWorkbook(evt.target.result);
-      if (!rows.length) return notify("File Excel proktor kosong.", "error");
+    inputEl.value = '';
+    await runWithBusyLock('import-proktor-excel', async () => {
+      try {
+        await ensureXlsxLoaded();
+        const rows = parseExcelWorkbook(evt.target.result);
+        if (!rows.length) return notify("File Excel proktor kosong.", "error");
 
-      const defaultSchoolId = (STATE.activeSekolahId && STATE.activeSekolahId !== 'ALL')
-        ? STATE.activeSekolahId
-        : STATE.sekolahList[0]?.id;
+        const defaultSchoolId = (STATE.activeSekolahId && STATE.activeSekolahId !== 'ALL')
+          ? STATE.activeSekolahId
+          : STATE.sekolahList[0]?.id;
 
-      const dedupMap = new Map();
-      rows.forEach(r => {
-        const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN']);
-        const targetSchool = rowNpsn
-          ? STATE.sekolahList.find(s => String(s.npsn).trim() === rowNpsn)
-          : STATE.sekolahList.find(s => s.id === defaultSchoolId);
-        const sid = targetSchool ? targetSchool.id : defaultSchoolId;
+        const dedupMap = new Map();
+        rows.forEach(r => {
+          const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN', 'NPSN_SEKOLAH']).replace(/\.0$/, '');
+          const targetSchool = rowNpsn
+            ? STATE.sekolahList.find(s => String(s.npsn).trim() === rowNpsn)
+            : STATE.sekolahList.find(s => s.id === defaultSchoolId);
+          const sid = targetSchool ? targetSchool.id : defaultSchoolId;
 
-        const kodeRuang = pickCol(r, ['KODE_RUANG', 'RUANG']);
-        const ruang = STATE.ruang.find(x => x.sekolah_id === sid && String(x.kode_ruang).trim().toLowerCase() === kodeRuang.toLowerCase());
+          const kodeRuang = pickCol(r, ['KODE_RUANG', 'RUANG']);
+          const ruang = kodeRuang
+            ? STATE.ruang.find(x => x.sekolah_id === sid && String(x.kode_ruang).trim().toLowerCase() === kodeRuang.toLowerCase())
+            : null;
 
-        const username = pickCol(r, ['USERNAME', 'USER', 'ID_PROKTOR']);
-        const nama_proktor = pickCol(r, ['NAMA_PROKTOR', 'NAMA_GURU', 'NAMA_LENGKAP', 'NAMA']);
+          const username = pickCol(r, ['USERNAME', 'USER', 'ID_PROKTOR']).replace(/\.0$/, '');
+          const nama_proktor = pickCol(r, ['NAMA_PROKTOR', 'NAMA_GURU', 'NAMA_LENGKAP', 'NAMA']);
 
-        if (username && nama_proktor && sid) {
-          dedupMap.set(username, {
-            sekolah_id: sid,
-            username,
-            password: pickCol(r, ['PASSWORD', 'PASS'], '123'),
-            nama_proktor,
-            nip: pickCol(r, ['NIP'], '-'),
-            ruang_id: ruang ? ruang.id : null
-          });
+          if (username && nama_proktor && sid) {
+            dedupMap.set(username, {
+              sekolah_id: sid,
+              username,
+              password: pickCol(r, ['PASSWORD', 'PASS'], '123').replace(/\.0$/, ''),
+              nama_proktor,
+              nip: pickCol(r, ['NIP'], '-').replace(/\.0$/, ''),
+              ruang_id: ruang ? ruang.id : null
+            });
+          }
+        });
+
+        const payloads = Array.from(dedupMap.values());
+        if (!payloads.length) {
+          return notify("Tidak ada baris valid. Pastikan kolom USERNAME dan NAMA_PROKTOR terisi.", "error");
         }
-      });
 
-      const payloads = Array.from(dedupMap.values());
-      if (!payloads.length) {
-        return notify("Tidak ada baris valid. Pastikan kolom USERNAME dan NAMA_PROKTOR terisi.", "error");
+        const toInsert = [];
+        let updatedCount = 0;
+        for (const item of payloads) {
+          const existing = STATE.proktorList.find(p => String(p.username).trim() === String(item.username).trim());
+          if (existing) {
+            await dbUpdate('proktor', existing.id, item);
+            updatedCount++;
+          } else {
+            toInsert.push(item);
+          }
+        }
+        if (toInsert.length > 0) {
+          await dbInsert('proktor', toInsert);
+        }
+
+        await loadRoleScopedData();
+        notify(`Berhasil mengimpor ${payloads.length} akun Guru / Proktor (${toInsert.length} baru, ${updatedCount} diperbarui)!`, "success");
+      } catch (err) {
+        notify("Gagal impor Excel proktor: " + err.message, "error");
       }
-
-      await dbUpsert('proktor', payloads, 'username');
-      await loadRoleScopedData();
-      notify(`Berhasil mengimpor ${payloads.length} akun Guru / Proktor!`, "success");
-    } catch (err) {
-      notify("Gagal impor Excel proktor: " + err.message, "error");
-    }
+    });
   };
   reader.readAsArrayBuffer(file);
 }
@@ -2273,18 +2596,24 @@ function downloadTemplateRuang() {
   ];
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Template_Ruang_Ujian");
-  XLSX.writeFile(wb, `Template_Import_Ruang_Ujian_${sek?.npsn || 'CBT'}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, ws, "Template_Ruang");
+  XLSX.writeFile(wb, `Template_Import_Ruang_${sek?.npsn || 'CBT'}.xlsx`);
 }
 
 function handleImportRuangExcel(e) {
-  const file = e.target.files[0];
-  e.target.value = '';
+  const inputEl = e.target;
+  const file = inputEl?.files?.[0];
   if (!file) return;
   const reader = new FileReader();
+  reader.onerror = () => {
+    inputEl.value = '';
+    notify("Gagal membaca file Excel ruang ujian.", "error");
+  };
   reader.onload = async (evt) => {
+    inputEl.value = '';
     await runWithBusyLock('import-ruang-excel', async () => {
       try {
+        await ensureXlsxLoaded();
         const rows = parseExcelWorkbook(evt.target.result);
         if (!rows.length) return notify("File Excel ruang ujian kosong.", "error");
 
@@ -2294,13 +2623,13 @@ function handleImportRuangExcel(e) {
 
         const dedupMap = new Map();
         rows.forEach(r => {
-          const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN']);
+          const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN', 'NPSN_SEKOLAH']).replace(/\.0$/, '');
           const targetSchool = rowNpsn
             ? STATE.sekolahList.find(s => String(s.npsn).trim() === rowNpsn)
             : STATE.sekolahList.find(s => s.id === defaultSchoolId);
           const sid = targetSchool ? targetSchool.id : defaultSchoolId;
 
-          const kode_ruang = pickCol(r, ['KODE_RUANG', 'KODE', 'RUANG']);
+          const kode_ruang = pickCol(r, ['KODE_RUANG', 'KODE', 'RUANG']).replace(/\.0$/, '');
           const nama_ruang = pickCol(r, ['NAMA_RUANG', 'NAMA', 'KETERANGAN']);
           const kapasitas = Number(pickCol(r, ['KAPASITAS', 'KUOTA', 'JUMLAH'], '35')) || 35;
 
@@ -2384,18 +2713,24 @@ function downloadTemplateSesi() {
   ];
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Template_Sesi_Ujian");
-  XLSX.writeFile(wb, `Template_Import_Sesi_Ujian_${sek?.npsn || 'CBT'}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, ws, "Template_Sesi");
+  XLSX.writeFile(wb, `Template_Import_Sesi_${sek?.npsn || 'CBT'}.xlsx`);
 }
 
 function handleImportSesiExcel(e) {
-  const file = e.target.files[0];
-  e.target.value = '';
+  const inputEl = e.target;
+  const file = inputEl?.files?.[0];
   if (!file) return;
   const reader = new FileReader();
+  reader.onerror = () => {
+    inputEl.value = '';
+    notify("Gagal membaca file Excel sesi ujian.", "error");
+  };
   reader.onload = async (evt) => {
+    inputEl.value = '';
     await runWithBusyLock('import-sesi-excel', async () => {
       try {
+        await ensureXlsxLoaded();
         const rows = parseExcelWorkbook(evt.target.result);
         if (!rows.length) return notify("File Excel sesi ujian kosong.", "error");
 
@@ -2405,7 +2740,7 @@ function handleImportSesiExcel(e) {
 
         const dedupMap = new Map();
         rows.forEach(r => {
-          const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN']);
+          const rowNpsn = pickCol(r, ['NPSN', 'KODE_NPSN', 'NPSN_SEKOLAH']).replace(/\.0$/, '');
           const targetSchool = rowNpsn
             ? STATE.sekolahList.find(s => String(s.npsn).trim() === rowNpsn)
             : STATE.sekolahList.find(s => s.id === defaultSchoolId);
@@ -2546,125 +2881,137 @@ function downloadTemplateSoal() {
 }
 
 function handleImportSoalExcel(e) {
-  const file = e.target.files[0];
-  e.target.value = '';
+  const inputEl = e.target;
+  const file = inputEl?.files?.[0];
   if (!file) return;
   if (!STATE.selectedMapelId || STATE.selectedMapelId === 'Semua') {
+    inputEl.value = '';
     return notify("Pilih paket ujian terlebih dahulu sebelum mengimpor soal.", "error");
   }
   const reader = new FileReader();
+  reader.onerror = () => {
+    inputEl.value = '';
+    notify("Gagal membaca file Excel soal.", "error");
+  };
   reader.onload = async (evt) => {
-    try {
-      const rows = parseExcelWorkbook(evt.target.result);
-      if (!rows.length) return notify("File Excel soal kosong.", "error");
+    inputEl.value = '';
+    await runWithBusyLock('import-soal-excel', async () => {
+      try {
+        await ensureXlsxLoaded();
+        const rows = parseExcelWorkbook(evt.target.result);
+        if (!rows.length) return notify("File Excel soal kosong.", "error");
 
-      const stimulusCacheByTitle = {};
-      STATE.stimulusList.forEach(st => {
-        if (st.judul) stimulusCacheByTitle[st.judul.trim().toLowerCase()] = st.id;
-      });
-      let nextStimUrutan = STATE.stimulusList.length + 1;
+        const stimulusCacheByTitle = {};
+        STATE.stimulusList.forEach(st => {
+          if (st.judul) stimulusCacheByTitle[st.judul.trim().toLowerCase()] = st.id;
+        });
+        let nextStimUrutan = STATE.stimulusList.length + 1;
 
-      const payloads = [];
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        const jenis = pickCol(r, ['JENIS_SOAL', 'TIPE_SOAL', 'JENIS'], 'PG').toUpperCase();
-        const pertanyaan = pickCol(r, ['PERTANYAAN', 'SOAL', 'TEKS_SOAL']);
-        if (!pertanyaan) continue;
+        const payloads = [];
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i];
+          const jenis = pickCol(r, ['JENIS_SOAL', 'TIPE_SOAL', 'JENIS'], 'PG').toUpperCase();
+          const pertanyaan = pickCol(r, ['PERTANYAAN', 'SOAL', 'TEKS_SOAL']);
+          if (!pertanyaan) continue;
 
-        const stimJudul = pickCol(r, ['STIMULUS_JUDUL', 'JUDUL_STIMULUS']);
-        const stimWacana = pickCol(r, ['STIMULUS_WACANA', 'WACANA_STIMULUS', 'STIMULUS', 'ISI_WACANA']);
-        const stimUrl = pickCol(r, ['STIMULUS_GAMBAR_URL', 'GAMBAR_STIMULUS_URL', 'STIMULUS_URL', 'URL_STIMULUS', 'URL_GAMBAR', 'URL']);
+          const stimJudul = pickCol(r, ['STIMULUS_JUDUL', 'JUDUL_STIMULUS']);
+          const stimWacana = pickCol(r, ['STIMULUS_WACANA', 'WACANA_STIMULUS', 'STIMULUS', 'ISI_WACANA']);
+          const stimUrl = pickCol(r, ['STIMULUS_GAMBAR_URL', 'GAMBAR_STIMULUS_URL', 'STIMULUS_URL', 'URL_STIMULUS', 'URL_GAMBAR', 'URL']);
 
-        let stimulusId = null;
-        if (stimJudul || stimWacana || stimUrl) {
-          const lookupTitle = (stimJudul || `Stimulus Soal ${i + 1}`).trim();
-          const keyTitle = lookupTitle.toLowerCase();
-          if (stimulusCacheByTitle[keyTitle]) {
-            stimulusId = stimulusCacheByTitle[keyTitle];
-          } else {
-            const insertedStim = await dbInsert('stimulus', {
-              mapel_id: STATE.selectedMapelId,
-              urutan: nextStimUrutan++,
-              judul: lookupTitle,
-              isi_wacana: stimWacana,
-              gambar_url: stimUrl
-            });
-            if (insertedStim && insertedStim[0]) {
-              stimulusId = insertedStim[0].id;
-              stimulusCacheByTitle[keyTitle] = stimulusId;
+          let stimulusId = null;
+          if (stimJudul || stimWacana || stimUrl) {
+            const lookupTitle = (stimJudul || `Stimulus Soal ${i + 1}`).trim();
+            const keyTitle = lookupTitle.toLowerCase();
+            if (stimulusCacheByTitle[keyTitle]) {
+              stimulusId = stimulusCacheByTitle[keyTitle];
+            } else {
+              const insertedStim = await dbInsert('stimulus', {
+                mapel_id: STATE.selectedMapelId,
+                urutan: nextStimUrutan++,
+                judul: lookupTitle,
+                isi_wacana: stimWacana,
+                gambar_url: stimUrl
+              });
+              if (insertedStim && insertedStim[0]) {
+                stimulusId = insertedStim[0].id;
+                stimulusCacheByTitle[keyTitle] = stimulusId;
+              }
             }
           }
+
+          const rawA = r.OPSI_A !== undefined && r.OPSI_A !== null ? String(r.OPSI_A).trim() : '';
+          const rawB = r.OPSI_B !== undefined && r.OPSI_B !== null ? String(r.OPSI_B).trim() : '';
+          const rawC = r.OPSI_C !== undefined && r.OPSI_C !== null ? String(r.OPSI_C).trim() : '';
+          const rawD = r.OPSI_D !== undefined && r.OPSI_D !== null ? String(r.OPSI_D).trim() : '';
+          const rawE = r.OPSI_E !== undefined && r.OPSI_E !== null ? String(r.OPSI_E).trim() : '';
+
+          let opsi = {};
+          if (jenis === 'PG' || jenis === 'PGK') {
+            if (rawA !== '') opsi.A = rawA;
+            if (rawB !== '') opsi.B = rawB;
+            if (rawC !== '') opsi.C = rawC;
+            if (rawD !== '') opsi.D = rawD;
+            if (rawE !== '') opsi.E = rawE;
+          } else if (jenis === 'BS') {
+            opsi = { pernyataan: rawA.split('|').map(x => x.trim()).filter(Boolean) };
+          } else if (jenis === 'MJ') {
+            opsi = {
+              premis: rawA.split('|').map(x => x.trim()).filter(Boolean),
+              target: rawB.split('|').map(x => x.trim()).filter(Boolean)
+            };
+          } else if (jenis === 'URAIAN') {
+            opsi = { pedoman: rawA };
+          }
+
+          payloads.push({
+            mapel_id: STATE.selectedMapelId,
+            stimulus_id: stimulusId,
+            nomor_urut: Number(pickCol(r, ['NOMOR', 'NOMOR_URUT', 'NO'], String(i + 1))) || (i + 1),
+            jenis_soal: ['PG','PGK','BS','MJ','ISIAN','URAIAN'].includes(jenis) ? jenis : 'PG',
+            pertanyaan,
+            opsi_jawaban: opsi,
+            kunci_jawaban: pickCol(r, ['KUNCI_JAWABAN', 'KUNCI']),
+            bobot: Number(pickCol(r, ['BOBOT', 'SKOR'], '1')) || 1
+          });
         }
 
-        const rawA = r.OPSI_A !== undefined && r.OPSI_A !== null ? String(r.OPSI_A).trim() : '';
-        const rawB = r.OPSI_B !== undefined && r.OPSI_B !== null ? String(r.OPSI_B).trim() : '';
-        const rawC = r.OPSI_C !== undefined && r.OPSI_C !== null ? String(r.OPSI_C).trim() : '';
-        const rawD = r.OPSI_D !== undefined && r.OPSI_D !== null ? String(r.OPSI_D).trim() : '';
-        const rawE = r.OPSI_E !== undefined && r.OPSI_E !== null ? String(r.OPSI_E).trim() : '';
-
-        let opsi = {};
-        if (jenis === 'PG' || jenis === 'PGK') {
-          if (rawA !== '') opsi.A = rawA;
-          if (rawB !== '') opsi.B = rawB;
-          if (rawC !== '') opsi.C = rawC;
-          if (rawD !== '') opsi.D = rawD;
-          if (rawE !== '') opsi.E = rawE;
-        } else if (jenis === 'BS') {
-          opsi = { pernyataan: rawA.split('|').map(x => x.trim()).filter(Boolean) };
-        } else if (jenis === 'MJ') {
-          opsi = {
-            premis: rawA.split('|').map(x => x.trim()).filter(Boolean),
-            target: rawB.split('|').map(x => x.trim()).filter(Boolean)
-          };
-        } else if (jenis === 'URAIAN') {
-          opsi = { pedoman: rawA };
+        if (!payloads.length) {
+          return notify("Tidak ada baris soal valid. Pastikan kolom PERTANYAAN terisi.", "error");
         }
 
-        payloads.push({
-          mapel_id: STATE.selectedMapelId,
-          stimulus_id: stimulusId,
-          nomor_urut: Number(pickCol(r, ['NOMOR', 'NOMOR_URUT', 'NO'], String(i + 1))) || (i + 1),
-          jenis_soal: ['PG','PGK','BS','MJ','ISIAN','URAIAN'].includes(jenis) ? jenis : 'PG',
-          pertanyaan,
-          opsi_jawaban: opsi,
-          kunci_jawaban: pickCol(r, ['KUNCI_JAWABAN', 'KUNCI']),
-          bobot: Number(pickCol(r, ['BOBOT', 'SKOR'], '1')) || 1
-        });
+        await dbInsert('soal', payloads);
+        touchMapelCacheVersion(STATE.selectedMapelId);
+        await loadBankSoalByMapel(STATE.selectedMapelId);
+        STATE.editSoalId = STATE.soalList[0]?.id || null;
+        STATE.newSoalNomor = null;
+        STATE.formStimulusId = undefined;
+        notify(`Berhasil mengimpor ${payloads.length} butir soal beserta stimulus & URL!`, "success");
+        render();
+      } catch (err) {
+        notify("Gagal impor soal Excel: " + err.message, "error");
       }
-
-      if (!payloads.length) {
-        return notify("Tidak ada baris soal valid. Pastikan kolom PERTANYAAN terisi.", "error");
-      }
-
-      await dbInsert('soal', payloads);
-      touchMapelCacheVersion(STATE.selectedMapelId);
-      await loadBankSoalByMapel(STATE.selectedMapelId);
-      STATE.editSoalId = STATE.soalList[0]?.id || null;
-      STATE.newSoalNomor = null;
-      STATE.formStimulusId = undefined;
-      notify(`Berhasil mengimpor ${payloads.length} butir soal beserta stimulus & URL!`, "success");
-      render();
-    } catch (err) {
-      notify("Gagal impor soal Excel: " + err.message, "error");
-    }
+    });
   };
   reader.readAsArrayBuffer(file);
 }
 
 function exportSoalExcel() {
   const rows = STATE.soalList.map(q => {
-    const stim = q.stimulus_id ? STATE.stimulusList.find(s => s.id === q.stimulus_id) : null;
+    const stim = q.stimulus_id ? STATE.stimulusList.find(st => st.id === q.stimulus_id) : null;
     let oA = '', oB = '', oC = '', oD = '', oE = '';
     if (q.jenis_soal === 'PG' || q.jenis_soal === 'PGK') {
-      oA = q.opsi_jawaban.A || ''; oB = q.opsi_jawaban.B || '';
-      oC = q.opsi_jawaban.C || ''; oD = q.opsi_jawaban.D || ''; oE = q.opsi_jawaban.E || '';
+      oA = q.opsi_jawaban?.A || '';
+      oB = q.opsi_jawaban?.B || '';
+      oC = q.opsi_jawaban?.C || '';
+      oD = q.opsi_jawaban?.D || '';
+      oE = q.opsi_jawaban?.E || '';
     } else if (q.jenis_soal === 'BS') {
-      oA = (q.opsi_jawaban.pernyataan || []).join('|');
+      oA = (q.opsi_jawaban?.pernyataan || []).join('|');
     } else if (q.jenis_soal === 'MJ') {
-      oA = (q.opsi_jawaban.premis || []).join('|');
-      oB = (q.opsi_jawaban.target || []).join('|');
+      oA = (q.opsi_jawaban?.premis || []).join('|');
+      oB = (q.opsi_jawaban?.target || []).join('|');
     } else if (q.jenis_soal === 'URAIAN') {
-      oA = q.opsi_jawaban.pedoman || '';
+      oA = q.opsi_jawaban?.pedoman || '';
     }
     return {
       NOMOR: q.nomor_urut,
@@ -2782,8 +3129,7 @@ async function addSekolahBaru(e) {
         npsn: fd.get('npsn').trim(),
         kecamatan: fd.get('kecamatan').trim(),
         logo_url: fd.get('logo_url').trim(),
-        token_aktif: fd.get('token_aktif').trim().toUpperCase(),
-        tanggal_ujian: fd.get('tanggal_ujian')
+        token_aktif: fd.get('token_aktif').trim().toUpperCase()
       };
       const inserted = await dbInsert('pengaturan_sekolah', payload);
       e.target.reset();
@@ -2810,8 +3156,7 @@ async function savePengaturanSekolah(e, sekolahId) {
         logo_url: (fd.get('logo_url') ?? current.logo_url ?? '').trim(),
         app_badge: (fd.get('app_badge') ?? current.app_badge ?? 'PUSDATIN • ANBK').trim() || 'PUSDATIN • ANBK',
         app_subtitle: (fd.get('app_subtitle') ?? current.app_subtitle ?? 'Sistem Asesmen Berbasis Komputer').trim() || 'Sistem Asesmen Berbasis Komputer',
-        token_aktif: (fd.get('token_aktif') || current.token_aktif || 'SAS2026').trim().toUpperCase(),
-        tanggal_ujian: fd.get('tanggal_ujian') || current.tanggal_ujian || '2026-11-25'
+        token_aktif: (fd.get('token_aktif') || current.token_aktif || 'SAS2026').trim().toUpperCase()
       };
       try {
         await dbUpdate('pengaturan_sekolah', sekolahId, payload);
@@ -2846,6 +3191,49 @@ async function savePengaturanSekolah(e, sekolahId) {
   }, btn);
 }
 
+function deleteSekolah(rawId) {
+  const id = decodeURIComponent(String(rawId || ''));
+  if (!id) return notify("ID sekolah tidak valid.", "error");
+  if (STATE.sekolahList.length <= 1) {
+    return notify("Minimal harus ada 1 sekolah aktif di dalam sistem.", "error");
+  }
+  const target = STATE.sekolahList.find(sk => String(sk.id) === String(id));
+  if (!target) return notify("Data sekolah tidak ditemukan.", "error");
+  const label = `${target.nama_sekolah} (NPSN: ${target.npsn})`;
+
+  askConfirm(
+    "Hapus Data Sekolah (NPSN)",
+    `Apakah Anda yakin ingin menghapus ${label}? Seluruh data siswa, proktor, ruang, sesi, jadwal, dan hasil ujian milik sekolah ini akan ikut terhapus secara permanen.`,
+    async () => {
+      await runWithBusyLock(`del-sekolah-${id}`, async () => {
+        try {
+          await dbDelete('pengaturan_sekolah', id);
+          if (IS_PREVIEW) {
+            MOCK_DB.ruang_ujian = (MOCK_DB.ruang_ujian || []).filter(x => String(x.sekolah_id) !== String(id));
+            MOCK_DB.sesi_ujian = (MOCK_DB.sesi_ujian || []).filter(x => String(x.sekolah_id) !== String(id));
+            MOCK_DB.proktor = (MOCK_DB.proktor || []).filter(x => String(x.sekolah_id) !== String(id));
+            MOCK_DB.siswa = (MOCK_DB.siswa || []).filter(x => String(x.sekolah_id) !== String(id));
+            MOCK_DB.jadwal_peserta = (MOCK_DB.jadwal_peserta || []).filter(x => String(x.sekolah_id) !== String(id));
+            MOCK_DB.hasil_ujian = (MOCK_DB.hasil_ujian || []).filter(x => String(x.sekolah_id) !== String(id));
+            MOCK_DB.mapel = (MOCK_DB.mapel || []).filter(x => String(x.sekolah_id) !== String(id));
+          }
+          STATE.sekolahList = STATE.sekolahList.filter(sk => String(sk.id) !== String(id));
+          if (String(STATE.activeSekolahId) === String(id)) {
+            STATE.activeSekolahId = STATE.sekolahList[0]?.id || 'ALL';
+            STATE.sekolah = getSekolahById(STATE.activeSekolahId);
+          }
+          await loadRoleScopedData();
+          notify(`Sekolah ${label} berhasil dihapus.`, "success");
+        } catch (err) {
+          notify("Gagal menghapus sekolah: " + err.message, "error");
+        }
+      });
+    },
+    "Ya, Hapus Sekolah",
+    true
+  );
+}
+
 async function addSiswa(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
@@ -2870,6 +3258,16 @@ async function addSiswa(e) {
           sesi_id: fd.has('sesi_id') ? (fd.get('sesi_id') || null) : (existing.sesi_id || null)
         };
         await dbUpdate('siswa', STATE.editSiswaId, payload);
+        if (!IS_PREVIEW && sb) {
+          await sb.from('jadwal_peserta').update({ ruang_id: payload.ruang_id, sesi_id: payload.sesi_id }).eq('siswa_id', STATE.editSiswaId);
+        } else {
+          (MOCK_DB.jadwal_peserta || []).forEach(j => {
+            if (String(j.siswa_id) === String(STATE.editSiswaId)) {
+              j.ruang_id = payload.ruang_id;
+              j.sesi_id = payload.sesi_id;
+            }
+          });
+        }
         STATE.editSiswaId = null;
         await loadRoleScopedData();
         notify(`Data siswa "${payload.nama_lengkap}" berhasil diperbarui.`, "success");
@@ -3105,14 +3503,19 @@ async function saveMapel(e) {
   await runWithBusyLock('save-mapel', async () => {
     try {
       const fd = new FormData(e.target);
-      const sid = fd.get('sekolah_id') || null;
+      const isAllSchools = fd.get('all_schools') === 'on';
+      const checkedSchoolIds = [...new Set(fd.getAll('sekolah_ids').map(v => String(v).trim()).filter(Boolean))];
+      const selectedSchoolIds = isAllSchools ? [] : checkedSchoolIds;
+      const singleSchoolId = selectedSchoolIds.length === 1 ? selectedSchoolIds[0] : null;
+
       const rawTanggal = fd.get('tanggal_mulai');
       const isoTanggal = parseDMYToISO(rawTanggal);
       if (!isoTanggal) {
         return notify("Format tanggal tidak valid. Gunakan format hari-bulan-tahun (contoh: 25-11-2026).", "error");
       }
       const payload = {
-        sekolah_id: sid === 'ALL' ? null : sid,
+        sekolah_id: singleSchoolId,
+        sekolah_ids: selectedSchoolIds,
         kode_mapel: fd.get('kode_mapel').trim().toUpperCase(),
         nama_mapel: fd.get('nama_mapel').trim(),
         kelas_target: fd.get('kelas_target').trim(),
@@ -3125,17 +3528,61 @@ async function saveMapel(e) {
         status: fd.get('status')
       };
 
+      const savePayloadWithFallback = async (isEdit, targetId = null) => {
+        try {
+          if (isEdit) {
+            await dbUpdate('mapel', targetId, payload);
+            return targetId;
+          } else {
+            const inserted = await dbInsert('mapel', payload);
+            return inserted?.[0]?.id || null;
+          }
+        } catch (dbErr) {
+          const msg = String(dbErr?.message || '');
+          if (msg.includes('sekolah_ids') || msg.includes('schema cache')) {
+            const fallbackPayload = { ...payload };
+            delete fallbackPayload.sekolah_ids;
+            if (isEdit) {
+              await dbUpdate('mapel', targetId, fallbackPayload);
+              return targetId;
+            } else {
+              const inserted = await dbInsert('mapel', fallbackPayload);
+              return inserted?.[0]?.id || null;
+            }
+          }
+          throw dbErr;
+        }
+      };
+
       if (STATE.editMapelId) {
-        await dbUpdate('mapel', STATE.editMapelId, payload);
+        const savedId = await savePayloadWithFallback(true, STATE.editMapelId);
+        if (savedId) {
+          try {
+            if (selectedSchoolIds.length > 0) localStorage.setItem(`cbt_mapel_schools_${savedId}`, JSON.stringify(selectedSchoolIds));
+            else localStorage.removeItem(`cbt_mapel_schools_${savedId}`);
+          } catch (_) {}
+        }
         touchMapelCacheVersion(STATE.editMapelId);
         STATE.mapelModalOpen = false;
         STATE.editMapelId = null;
         await loadRoleScopedData();
         notify(`Paket ujian "${payload.nama_mapel}" berhasil diperbarui.`, "success");
       } else {
-        await dbInsert('mapel', payload);
+        const createdId = await savePayloadWithFallback(false);
+        if (createdId) {
+          try {
+            if (selectedSchoolIds.length > 0) localStorage.setItem(`cbt_mapel_schools_${createdId}`, JSON.stringify(selectedSchoolIds));
+            else localStorage.removeItem(`cbt_mapel_schools_${createdId}`);
+          } catch (_) {}
+        }
         STATE.mapelModalOpen = false;
         STATE.editMapelId = null;
+        if (STATE.adminTab === 'bank_soal' && createdId) {
+          STATE.selectedMapelId = createdId;
+          STATE.editSoalId = null;
+          STATE.newSoalNomor = 1;
+          STATE.formStimulusId = undefined;
+        }
         await loadRoleScopedData();
         notify(`Paket ujian "${payload.nama_mapel}" berhasil dibuat.`, "success");
       }
@@ -4594,7 +5041,6 @@ function renderAdminContent() {
             </div>
             <input type="hidden" name="npsn" value="${esc(selectedSek.npsn)}" />
             <input type="hidden" name="token_aktif" value="${esc(selectedSek.token_aktif)}" />
-            <input type="hidden" name="tanggal_ujian" value="${esc(selectedSek.tanggal_ujian || '2026-11-25')}" />
             <div class="flex justify-end">
               <button type="submit" class="px-5 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold shadow">Simpan Nama Aplikasi, Sekolah &amp; Logo</button>
             </div>
@@ -4613,12 +5059,12 @@ function renderAdminContent() {
           <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h2 class="text-base font-extrabold text-slate-900">+ Daftarkan Sekolah Baru (Isolasi NPSN)</h2>
             <div class="flex flex-wrap gap-2">
-              <button onclick="CBT.downloadTemplateSekolah()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold">⬇ Template Excel</button>
+              <button type="button" onclick="CBT.downloadTemplateSekolah()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold">⬇ Template Excel</button>
               <label class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer">
                 ⬆ Import Excel (.xlsx)
-                <input type="file" accept=".xlsx,.xls" onchange="CBT.handleImportSekolahExcel(event)" class="hidden" />
+                <input type="file" accept=".xlsx,.xls,.csv" onchange="CBT.handleImportSekolahExcel(event)" class="hidden" />
               </label>
-              <button onclick="CBT.exportSekolahExcel()" class="px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold">⬇ Export Excel</button>
+              <button type="button" onclick="CBT.exportSekolahExcel()" class="px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold">⬇ Export Excel</button>
             </div>
           </div>
           <form onsubmit="CBT.addSekolah(event)" class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-slate-50 p-4 rounded-2xl border text-xs">
@@ -4626,14 +5072,16 @@ function renderAdminContent() {
             <input name="nama_sekolah" required placeholder="Nama Sekolah (SDN GEDONGBOYOUNTUNG)" class="px-3 py-2.5 rounded-xl border bg-white uppercase" />
             <input name="kecamatan" value="Kecamatan Turi, Kabupaten Lamongan" class="px-3 py-2.5 rounded-xl border bg-white" />
             <input name="token_aktif" required placeholder="Token Ujian (Mis: SAS2026)" class="px-3 py-2.5 rounded-xl border bg-white uppercase font-bold" />
-            <input name="tanggal_ujian" type="date" value="2026-11-25" class="px-3 py-2.5 rounded-xl border bg-white" />
-            <input name="logo_url" placeholder="URL Logo Sekolah (Opsional)" class="px-3 py-2.5 rounded-xl border bg-white" />
+            <input name="logo_url" placeholder="URL Logo Sekolah (Opsional)" class="sm:col-span-2 px-3 py-2.5 rounded-xl border bg-white" />
             <button type="submit" class="sm:col-span-3 py-2.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold">+ Tambah Sekolah ke Sistem</button>
           </form>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          ${STATE.sekolahList.map(sk => `
+          ${STATE.sekolahList.map(sk => {
+            const safeSekolahId = encodeURIComponent(String(sk.id ?? ''));
+            const canDelete = STATE.sekolahList.length > 1;
+            return `
             <form id="form-sekolah-${sk.id}" onsubmit="CBT.saveSekolah(event, '${sk.id}')" class="glass-panel rounded-2xl p-4 shadow-sm space-y-2.5 text-xs">
               <div class="flex items-center justify-between border-b pb-2">
                 <span class="font-extrabold text-blue-800">NPSN: ${esc(sk.npsn)}</span>
@@ -4658,22 +5106,12 @@ function renderAdminContent() {
               </div>
               <div class="grid grid-cols-2 gap-2">
                 <div>
-                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Nama Badge Awal</label>
-                  <input name="app_badge" value="${esc(sk.app_badge || 'PUSDATIN • ANBK')}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-bold" />
-                </div>
-                <div>
-                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Subjudul Awal Aplikasi</label>
-                  <input name="app_subtitle" value="${esc(sk.app_subtitle || 'Sistem Asesmen Berbasis Komputer')}" required class="w-full px-3 py-1.5 rounded-xl border bg-white" />
-                </div>
-              </div>
-              <div class="grid grid-cols-2 gap-2">
-                <div>
                   <label class="font-bold text-slate-600 text-[11px] block mb-0.5">NPSN</label>
                   <input name="npsn" value="${esc(sk.npsn)}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-mono" />
                 </div>
                 <div>
-                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Tanggal Pelaksanaan</label>
-                  <input name="tanggal_ujian" type="date" value="${esc(sk.tanggal_ujian)}" class="w-full px-3 py-1.5 rounded-xl border bg-white" />
+                  <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Token Ujian Aktif</label>
+                  <input name="token_aktif" value="${esc(sk.token_aktif)}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-bold uppercase" />
                 </div>
               </div>
               <div>
@@ -4681,16 +5119,22 @@ function renderAdminContent() {
                 <input name="kecamatan" value="${esc(sk.kecamatan)}" class="w-full px-3 py-1.5 rounded-xl border bg-white" />
               </div>
               <div>
-                <label class="font-bold text-slate-600 text-[11px] block mb-0.5">URL Logo Awal / Sekolah</label>
+                <label class="font-bold text-slate-600 text-[11px] block mb-0.5">URL Logo Sekolah</label>
                 <input name="logo_url" value="${esc(sk.logo_url)}" oninput="CBT.onSchoolLogoInput('${sk.id}', this.value)" placeholder="https://.../logo.png" class="w-full px-3 py-1.5 rounded-xl border bg-white" />
               </div>
-              <div>
-                <label class="font-bold text-slate-600 text-[11px] block mb-0.5">Token Ujian Aktif</label>
-                <input name="token_aktif" value="${esc(sk.token_aktif)}" required class="w-full px-3 py-1.5 rounded-xl border bg-white font-bold uppercase" />
+              <div class="flex items-center gap-2 pt-1">
+                <button type="submit" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold">Simpan Perubahan Sekolah</button>
+                <button type="button" onclick="CBT.deleteSekolah('${safeSekolahId}')"
+                  ${!canDelete ? 'disabled title="Minimal harus tersisa 1 sekolah aktif"' : ''}
+                  class="px-4 py-2.5 rounded-xl font-bold transition ${canDelete
+                    ? 'bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 cursor-pointer'
+                    : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'}">
+                  Hapus
+                </button>
               </div>
-              <button type="submit" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold">Simpan Perubahan Sekolah</button>
             </form>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
       </div>
     `;
@@ -4710,7 +5154,7 @@ function renderAdminContent() {
             <button onclick="CBT.downloadTemplateSiswa()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold">⬇ Template Excel</button>
             <label class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer">
               ⬆ Import Excel (.xlsx)
-              <input type="file" accept=".xlsx,.xls" onchange="CBT.handleImportSiswaExcel(event)" class="hidden" />
+              <input type="file" accept=".xlsx,.xls,.csv" onchange="CBT.handleImportSiswaExcel(event)" class="hidden" />
             </label>
             <button onclick="CBT.exportSiswaExcel()" class="px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold">⬇ Export Excel</button>
             <button onclick="CBT.bulkDeleteSiswa()" class="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold">Hapus (${STATE.selectedSiswaIds.length})</button>
@@ -4731,16 +5175,25 @@ function renderAdminContent() {
             <input name="username" required value="${esc(editingSiswa?.username || '')}" placeholder="NISN / Username" class="px-3 py-2 rounded-xl border text-xs bg-white" />
             <input name="password" required value="${esc(editingSiswa ? editingSiswa.password : '123')}" placeholder="Password" class="px-3 py-2 rounded-xl border text-xs bg-white" />
             <input name="nama_lengkap" required value="${esc(editingSiswa?.nama_lengkap || '')}" placeholder="Nama Lengkap Siswa" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-            <input name="kelas" required value="${esc(editingSiswa ? editingSiswa.kelas : 'VI')}" placeholder="Kelas (mis: VI)" class="px-3 py-2 rounded-xl border text-xs bg-white" />
-            <select name="jenis_kelamin" class="px-3 py-2 rounded-xl border text-xs bg-white">
-              <option value="Laki-Laki" ${(!editingSiswa || editingSiswa.jenis_kelamin==='Laki-Laki')?'selected':''}>Laki-Laki</option>
-              <option value="Perempuan" ${(editingSiswa && editingSiswa.jenis_kelamin==='Perempuan')?'selected':''}>Perempuan</option>
-            </select>
+            <div class="grid grid-cols-2 gap-2">
+              <input name="kelas" required value="${esc(editingSiswa ? editingSiswa.kelas : 'VI')}" placeholder="Kelas (VI)" class="px-3 py-2 rounded-xl border text-xs bg-white" />
+              <select name="jenis_kelamin" class="px-2.5 py-2 rounded-xl border text-xs bg-white">
+                <option value="Laki-Laki" ${(!editingSiswa || editingSiswa.jenis_kelamin==='Laki-Laki')?'selected':''}>Laki-Laki</option>
+                <option value="Perempuan" ${(editingSiswa && editingSiswa.jenis_kelamin==='Perempuan')?'selected':''}>Perempuan</option>
+              </select>
+            </div>
             <select name="ruang_id" class="px-3 py-2 rounded-xl border text-xs bg-white">
               <option value="">-- Pilih Ruang --</option>
               ${STATE.ruang.map(r => {
                 const sk = getSekolahById(r.sekolah_id);
                 return `<option value="${r.id}" ${editingSiswa && String(editingSiswa.ruang_id)===String(r.id)?'selected':''}>${esc(sk.nama_sekolah)} - ${esc(r.kode_ruang)}</option>`;
+              }).join('')}
+            </select>
+            <select name="sesi_id" class="px-3 py-2 rounded-xl border text-xs bg-white">
+              <option value="">-- Pilih Sesi --</option>
+              ${STATE.sesi.map(se => {
+                const sk = getSekolahById(se.sekolah_id);
+                return `<option value="${se.id}" ${editingSiswa && String(editingSiswa.sesi_id)===String(se.id)?'selected':''}>${esc(sk.nama_sekolah)} - ${esc(formatSesiDisplay(se))}</option>`;
               }).join('')}
             </select>
             <button type="submit" class="px-4 py-2 rounded-xl ${editingSiswa ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-700 hover:bg-blue-800'} text-white font-bold text-xs">
@@ -4759,7 +5212,7 @@ function renderAdminContent() {
                 <th class="p-2.5">Password</th>
                 <th class="p-2.5">Nama Lengkap</th>
                 <th class="p-2.5">Kelas</th>
-                <th class="p-2.5">Ruang</th>
+                <th class="p-2.5">Ruang &amp; Sesi</th>
                 <th class="p-2.5">Aksi</th>
               </tr>
             </thead>
@@ -4769,6 +5222,7 @@ function renderAdminContent() {
               ` : scopedSiswa.map(s => {
                 const sek = getSekolahById(s.sekolah_id);
                 const r = STATE.ruang.find(x => x.id === s.ruang_id);
+                const se = STATE.sesi.find(x => x.id === s.sesi_id);
                 const checked = STATE.selectedSiswaIds.includes(s.id);
                 const safeId = encodeURIComponent(String(s.id ?? ''));
                 const isEditingRow = editingSiswa && String(editingSiswa.id) === String(s.id);
@@ -4780,7 +5234,7 @@ function renderAdminContent() {
                     <td class="p-2.5 font-mono">${esc(s.password)}</td>
                     <td class="p-2.5 font-semibold">${esc(s.nama_lengkap)}</td>
                     <td class="p-2.5">${esc(s.kelas)}</td>
-                    <td class="p-2.5">${esc(r?.kode_ruang || '-')}</td>
+                    <td class="p-2.5">${esc(r?.kode_ruang || '-')} ${se ? `• <span class="text-emerald-700 font-semibold">${esc(formatSesiDisplay(se))}</span>` : ''}</td>
                     <td class="p-2.5 whitespace-nowrap">
                       <button type="button" onclick="CBT.startEditSiswa('${safeId}')" class="px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold cursor-pointer">Edit</button>
                     </td>
@@ -4811,7 +5265,7 @@ function renderAdminContent() {
             <button onclick="CBT.downloadTemplateProktor()" class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold">⬇ Template Excel</button>
             <label class="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer">
               ⬆ Import Excel (.xlsx)
-              <input type="file" accept=".xlsx,.xls" onchange="CBT.handleImportProktorExcel(event)" class="hidden" />
+              <input type="file" accept=".xlsx,.xls,.csv" onchange="CBT.handleImportProktorExcel(event)" class="hidden" />
             </label>
             <button onclick="CBT.exportProktorExcel()" class="px-3 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold">⬇ Export Excel</button>
           </div>
@@ -4883,7 +5337,7 @@ function renderAdminContent() {
               <button type="button" onclick="CBT.downloadTemplateRuang()" class="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[11px] font-bold">⬇ Template</button>
               <label class="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer">
                 ⬆ Import Excel
-                <input type="file" accept=".xlsx,.xls" onchange="CBT.handleImportRuangExcel(event)" class="hidden" />
+                <input type="file" accept=".xlsx,.xls,.csv" onchange="CBT.handleImportRuangExcel(event)" class="hidden" />
               </label>
               <button type="button" onclick="CBT.exportRuangExcel()" class="px-2.5 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[11px] font-bold">⬇ Export</button>
             </div>
@@ -4928,7 +5382,7 @@ function renderAdminContent() {
               <button type="button" onclick="CBT.downloadTemplateSesi()" class="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[11px] font-bold">⬇ Template</button>
               <label class="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer">
                 ⬆ Import Excel
-                <input type="file" accept=".xlsx,.xls" onchange="CBT.handleImportSesiExcel(event)" class="hidden" />
+                <input type="file" accept=".xlsx,.xls,.csv" onchange="CBT.handleImportSesiExcel(event)" class="hidden" />
               </label>
               <button type="button" onclick="CBT.exportSesiExcel()" class="px-2.5 py-1.5 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-[11px] font-bold">⬇ Export</button>
             </div>
@@ -4992,10 +5446,18 @@ function renderAdminContent() {
         ` : `
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             ${STATE.mapelList.map(m => {
-              const sk = m.sekolah_id ? getSekolahById(m.sekolah_id) : null;
+              const schoolIds = getMapelSchoolIds(m);
+              const schoolNames = schoolIds.map(sid => getSekolahById(sid).nama_sekolah);
+              const cakupanLabel = schoolIds.length === 0
+                ? '🌐 Lintas Semua Sekolah'
+                : (schoolIds.length === 1
+                  ? `🏫 ${schoolNames[0]}`
+                  : `🏫 ${schoolIds.length} Sekolah: ${schoolNames.join(', ')}`);
               const isAktif = m.status === 'Aktif';
               const safeId = encodeURIComponent(String(m.id ?? ''));
-              const tokenLabel = sk ? sk.token_aktif : (activeSek?.token_aktif || 'SAS2026');
+              const tokenLabel = schoolIds.length === 1
+                ? getSekolahById(schoolIds[0]).token_aktif
+                : (activeSek?.token_aktif || 'SAS2026');
               const jamMulai = String(m.jam_mulai || '07:00').slice(0, 5);
               const jamSelesai = String(m.jam_selesai || '15:00').slice(0, 5);
               const tglDMY = formatTanggalDMY(m.tanggal_mulai);
@@ -5007,8 +5469,8 @@ function renderAdminContent() {
                         <span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${isAktif ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}">
                           ${isAktif ? '● Aktif' : '○ Ditutup (Draft)'}
                         </span>
-                        <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
-                          ${sk ? esc(sk.nama_sekolah) : '🌐 Lintas Semua Sekolah'}
+                        <span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold" title="${esc(cakupanLabel)}">
+                          ${esc(cakupanLabel)}
                         </span>
                       </div>
                       <span class="px-2.5 py-0.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 font-mono text-[11px] font-extrabold">
@@ -5121,6 +5583,11 @@ function renderAdminContent() {
                 ? `<option value="">-- Belum Ada Paket Ujian --</option>`
                 : STATE.mapelList.map(m => `<option value="${m.id}" ${m.id===STATE.selectedMapelId?'selected':''}>${esc(m.kode_mapel)} - ${esc(m.nama_mapel)}</option>`).join('')}
             </select>
+            <button type="button" onclick="CBT.openMapelModal()"
+              title="Buat paket ujian baru langsung dari menu Bank Soal"
+              class="px-3 py-2 rounded-lg bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold shadow-xs cursor-pointer transition">
+              + Tambah Paket
+            </button>
             ${hasSelectedMapel ? `
               <button type="button" onclick="CBT.clearSoalPaket('${safeSelectedMapelId}')"
                 ${STATE.soalList.length === 0 && STATE.stimulusList.length === 0 ? 'disabled' : ''}
@@ -5141,7 +5608,7 @@ function renderAdminContent() {
             <button onclick="CBT.downloadTemplateSoal()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-bold">⬇ Template 6 Tipe</button>
             <label class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer">
               ⬆ Import Soal Excel
-              <input type="file" accept=".xlsx,.xls" onchange="CBT.handleImportSoalExcel(event)" class="hidden" />
+              <input type="file" accept=".xlsx,.xls,.csv" onchange="CBT.handleImportSoalExcel(event)" class="hidden" />
             </label>
             <button onclick="CBT.exportSoalExcel()" class="px-3 py-1.5 rounded-lg bg-blue-700 text-white text-xs font-bold">⬇ Export Soal</button>
           </div>
@@ -5575,26 +6042,34 @@ function renderSingleOfficialCardHtml(siswa) {
   const sek = getSekolahById(siswa.sekolah_id);
   const brand = getAppBranding();
   const cardLogo = sek.logo_url || brand.logo_url || DEFAULT_SHIELD_SVG;
-  const r = STATE.ruang.find(x => x.id === siswa.ruang_id);
-  const se = STATE.sesi.find(x => x.id === siswa.sesi_id);
-  const sesiJam = se
-    ? `${se.nama_sesi} (${String(se.waktu_mulai).slice(0,5).replace(':','.')} - ${String(se.waktu_selesai).slice(0,5).replace(':','.')} WIB)`
-    : 'Sesi 1 (07.30 - 09.30 WIB)';
+  const studentJadwalRows = STATE.jadwalList.filter(j => String(j.siswa_id) === String(siswa.id));
+  const resolvedRuangId = siswa.ruang_id || studentJadwalRows.find(j => j.ruang_id)?.ruang_id || null;
+  const resolvedSesiId = siswa.sesi_id || studentJadwalRows.find(j => j.sesi_id)?.sesi_id || null;
+
+  const r = STATE.ruang.find(x => String(x.id) === String(resolvedRuangId));
+  let se = STATE.sesi.find(x => String(x.id) === String(resolvedSesiId));
+  if (!se) {
+    const schoolSesiList = STATE.sesi.filter(x => String(x.sekolah_id) === String(siswa.sekolah_id));
+    if (schoolSesiList.length === 1) se = schoolSesiList[0];
+  }
+  const sesiJam = se ? formatSesiDisplay(se) : 'Sesi Belum Diatur';
   const ruangLabel = r
     ? `${r.kode_ruang} (${r.nama_ruang})`
-    : 'Ruang 01 (Lab Komputer / Ruang Kelas)';
+    : 'Ruang Belum Diatur';
 
-  const studentJadwal = STATE.jadwalList
-    .filter(j => j.siswa_id === siswa.id)
+  const studentJadwal = studentJadwalRows
     .map(j => STATE.mapelList.find(m => m.id === j.mapel_id))
     .filter(Boolean);
 
   const jadwalRows = studentJadwal.length > 0
     ? studentJadwal
-    : STATE.mapelList.filter(m => !m.sekolah_id || m.sekolah_id === siswa.sekolah_id);
+    : STATE.mapelList.filter(m => isMapelForSchool(m, siswa.sekolah_id));
+
+  const sortedExamDates = jadwalRows.map(m => m.tanggal_mulai).filter(Boolean).sort();
+  const examDateFromManajemen = sortedExamDates[0] || getWIBNow().toISOString().slice(0, 10);
 
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=90x90&data=${encodeURIComponent(siswa.username)}`;
-  const tglCetak = formatTanggalIndo(sek.tanggal_ujian || '2026-11-25');
+  const tglCetak = formatTanggalIndo(examDateFromManajemen);
 
   return `
     <div class="cbt-official-card kartu-item">
@@ -5651,13 +6126,13 @@ function renderSingleOfficialCardHtml(siswa) {
         <tbody>
           ${jadwalRows.length === 0 ? `
             <tr>
-              <td>${esc(formatTanggalSlash(sek.tanggal_ujian))}</td>
+              <td>${esc(formatTanggalSlash(examDateFromManajemen))}</td>
               <td style="text-align:center;">07:30 - 09:30<br/>WIB</td>
               <td><strong>Belum ada paket ujian dijadwalkan</strong></td>
             </tr>
           ` : jadwalRows.map(m => `
             <tr>
-              <td>${esc(formatTanggalSlash(m.tanggal_mulai || sek.tanggal_ujian))}</td>
+              <td>${esc(formatTanggalSlash(m.tanggal_mulai || examDateFromManajemen))}</td>
               <td style="text-align:center;">${esc(String(m.jam_mulai || '07:30').slice(0,5))} - ${esc(String(m.jam_selesai || '09:30').slice(0,5))}<br/>WIB</td>
               <td><strong>${esc(m.nama_mapel)}</strong></td>
             </tr>
@@ -5811,6 +6286,7 @@ CREATE TABLE IF NOT EXISTS public.proktor (
 CREATE TABLE IF NOT EXISTS public.mapel (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sekolah_id UUID REFERENCES public.pengaturan_sekolah(id) ON DELETE CASCADE,
+    sekolah_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     kode_mapel TEXT UNIQUE NOT NULL,
     nama_mapel TEXT NOT NULL,
     kelas_target TEXT DEFAULT 'Semua',
@@ -5824,6 +6300,7 @@ CREATE TABLE IF NOT EXISTS public.mapel (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE public.mapel ADD COLUMN IF NOT EXISTS sekolah_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE public.mapel ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- 6. SISWA (Terisolasi ketat per sekolah_id)
@@ -6026,10 +6503,11 @@ function renderMapelModal() {
   const editing = STATE.editMapelId
     ? STATE.mapelList.find(m => String(m.id) === String(STATE.editMapelId))
     : null;
-  const defaultTglDMY = formatTanggalDMY(editing?.tanggal_mulai || STATE.sekolah?.tanggal_ujian || '2026-11-25');
+  const defaultTglDMY = formatTanggalDMY(editing?.tanggal_mulai || getWIBNow().toISOString().slice(0, 10));
   const jamMulaiVal = String(editing?.jam_mulai || '07:00').slice(0, 5);
   const jamSelesaiVal = String(editing?.jam_selesai || '15:00').slice(0, 5);
-  const selectedSchoolVal = editing ? (editing.sekolah_id || 'ALL') : 'ALL';
+  const selectedSchoolIds = editing ? getMapelSchoolIds(editing) : [];
+  const isAllSchoolsChecked = selectedSchoolIds.length === 0;
   const acakSoalChecked = editing ? Boolean(editing.acak_soal) : true;
   const acakOpsiChecked = editing ? Boolean(editing.acak_opsi) : true;
 
@@ -6045,7 +6523,7 @@ function renderMapelModal() {
           <button type="button" onclick="CBT.closeMapelModal()" class="text-white/90 hover:text-white font-extrabold text-lg leading-none px-1">✕</button>
         </div>
 
-        <form onsubmit="CBT.saveMapel(event)" class="p-5 space-y-3.5 text-xs max-h-[82vh] overflow-y-auto">
+        <form id="form-mapel-modal" onsubmit="CBT.saveMapel(event)" class="p-5 space-y-3.5 text-xs max-h-[82vh] overflow-y-auto">
           <div>
             <label class="block font-bold text-slate-700 mb-1">Nama Paket Ujian / Mata Pelajaran *</label>
             <input name="nama_mapel" required value="${esc(editing?.nama_mapel || '')}" placeholder="Contoh: Bahasa Indonesia Kelas 6"
@@ -6059,31 +6537,55 @@ function renderMapelModal() {
                 class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white uppercase font-mono font-bold" />
             </div>
             <div>
-              <label class="block font-bold text-slate-700 mb-1">Cakupan Sekolah</label>
-              <select name="sekolah_id" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-bold">
-                <option value="ALL" ${selectedSchoolVal==='ALL'?'selected':''}>🌐 Lintas Semua Sekolah</option>
-                ${STATE.sekolahList.map(sk => `<option value="${sk.id}" ${selectedSchoolVal===sk.id?'selected':''}>${esc(sk.nama_sekolah)}</option>`).join('')}
+              <label class="block font-bold text-slate-700 mb-1">Status Ujian</label>
+              <select name="status" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white font-bold">
+                <option value="Aktif" ${(!editing || editing.status==='Aktif')?'selected':''}>Aktif</option>
+                <option value="Draft" ${(editing && editing.status==='Draft')?'selected':''}>Draft (Ditutup)</option>
               </select>
             </div>
           </div>
 
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <label class="font-bold text-slate-700">Cakupan Sekolah (Centang Sekolah yang Mengikuti Ujian):</label>
+              <span id="mapel-school-count" class="text-[11px] font-bold text-blue-700">
+                ${isAllSchoolsChecked ? 'Semua Sekolah' : `${selectedSchoolIds.length} Sekolah Dipilih`}
+              </span>
+            </div>
+            <div class="rounded-2xl border border-slate-300 bg-slate-50/70 p-2.5 space-y-1.5 max-h-40 overflow-y-auto">
+              <label class="flex items-center gap-2.5 p-2 rounded-xl bg-blue-50/90 border border-blue-200 cursor-pointer">
+                <input id="mapel-all-schools" type="checkbox" name="all_schools" ${isAllSchoolsChecked ? 'checked' : ''}
+                  onchange="CBT.onMapelAllSchoolsToggle(this.checked)"
+                  class="w-4 h-4 accent-blue-700 shrink-0 cursor-pointer" />
+                <span class="font-extrabold text-blue-900">🌐 Lintas Semua Sekolah (${STATE.sekolahList.length} Sekolah)</span>
+              </label>
+              <div class="grid grid-cols-1 gap-1 pt-0.5">
+                ${STATE.sekolahList.map(sk => {
+                  const isChecked = !isAllSchoolsChecked && selectedSchoolIds.includes(String(sk.id));
+                  return `
+                    <label class="flex items-center gap-2.5 px-2.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-blue-50/40 cursor-pointer">
+                      <input type="checkbox" name="sekolah_ids" value="${esc(sk.id)}" ${isChecked ? 'checked' : ''}
+                        onchange="CBT.onMapelSchoolCheckChange()"
+                        class="mapel-school-checkbox w-4 h-4 accent-blue-700 shrink-0 cursor-pointer" />
+                      <span class="font-bold text-slate-800 flex-1 truncate">${esc(sk.nama_sekolah)}</span>
+                      <span class="text-[10px] font-mono text-slate-500 shrink-0">NPSN: ${esc(sk.npsn)}</span>
+                    </label>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block font-bold text-slate-700 mb-1">Kelas Peserta *</label>
               <input name="kelas_target" required value="${esc(editing?.kelas_target || 'VI')}" placeholder="VI / Semua"
-                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-semibold" />
+                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white font-semibold" />
             </div>
             <div>
               <label class="block font-bold text-slate-700 mb-1">Durasi (Menit) *</label>
               <input name="durasi_menit" type="number" min="5" required value="${editing ? editing.durasi_menit : 60}"
-                class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-bold" />
-            </div>
-            <div class="col-span-2 sm:col-span-1">
-              <label class="block font-bold text-slate-700 mb-1">Status Ujian</label>
-              <select name="status" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white font-bold">
-                <option value="Aktif" ${(!editing || editing.status==='Aktif')?'selected':''}>Aktif</option>
-                <option value="Draft" ${(editing && editing.status==='Draft')?'selected':''}>Draft (Ditutup)</option>
-              </select>
+                class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white font-bold" />
             </div>
           </div>
 
@@ -6243,6 +6745,7 @@ window.CBT = {
   updateToken: updateTokenSekolah,
   addSekolah: addSekolahBaru,
   saveSekolah: savePengaturanSekolah,
+  deleteSekolah,
   onSchoolLogoInput: (schoolId, urlVal) => {
     const img = document.getElementById(`logo-preview-${schoolId}`);
     if (!img) return;
@@ -6350,6 +6853,28 @@ window.CBT = {
     STATE.mapelModalOpen = false;
     STATE.editMapelId = null;
     render();
+  },
+  onMapelAllSchoolsToggle: (checked) => {
+    const boxes = document.querySelectorAll('.mapel-school-checkbox');
+    if (checked) {
+      boxes.forEach(cb => { cb.checked = false; });
+    }
+    const countEl = document.getElementById('mapel-school-count');
+    if (countEl) {
+      const n = document.querySelectorAll('.mapel-school-checkbox:checked').length;
+      countEl.textContent = (checked || n === 0) ? 'Semua Sekolah' : `${n} Sekolah Dipilih`;
+    }
+  },
+  onMapelSchoolCheckChange: () => {
+    const checkedCount = document.querySelectorAll('.mapel-school-checkbox:checked').length;
+    const allBox = document.getElementById('mapel-all-schools');
+    if (allBox) {
+      allBox.checked = (checkedCount === 0);
+    }
+    const countEl = document.getElementById('mapel-school-count');
+    if (countEl) {
+      countEl.textContent = checkedCount === 0 ? 'Semua Sekolah' : `${checkedCount} Sekolah Dipilih`;
+    }
   },
   saveMapel,
   addMapel: saveMapel,
